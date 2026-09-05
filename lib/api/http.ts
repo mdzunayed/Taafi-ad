@@ -16,7 +16,16 @@ interface RetriableConfig extends InternalAxiosRequestConfig {
 
 export const api = axios.create({
   baseURL: API_ORIGIN,
-  timeout: 30_000,
+  // Sized for a Render FREE-TIER COLD START, not for a healthy request. The
+  // instance sleeps after 15 minutes idle and the next call waits out a full
+  // container boot (~30-60s). At the previous 30s budget the first request of
+  // a session timed out just short of the server waking, and the console
+  // showed empty tables on a backend that was fine — the same failure the
+  // Flutter client hit, which is why DioClient uses 60s too.
+  //
+  // A warm request still answers in well under a second, so this only ever
+  // costs time on the wake-up path.
+  timeout: 60_000,
   headers: { Accept: 'application/json' },
   // Never true. No cookie of ours is meant to reach Express, and the backend
   // currently reflects any origin when CORS_ALLOWED_ORIGINS is unset — which

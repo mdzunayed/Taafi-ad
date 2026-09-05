@@ -7,7 +7,11 @@ import {
   setSessionCookies,
   toSessionUser,
 } from '@/lib/auth/cookies';
-import { AuthUpstreamError, refresh } from '@/lib/auth/upstream';
+import {
+  AuthUpstreamError,
+  UPSTREAM_TIMEOUT_MS,
+  refresh,
+} from '@/lib/auth/upstream';
 import { forbiddenOrigin, isSameOrigin } from '@/lib/auth/origin-check';
 import { expiryMs } from '@/lib/auth/jwt';
 import type { RefreshResponseWire, SessionUser } from '@/types/wire/auth';
@@ -33,7 +37,22 @@ export const runtime = 'nodejs';
  * If you deploy serverless and want a hard guarantee, back this with Redis.
  */
 const inFlight = new Map<string, Promise<RefreshResponseWire>>();
-const IN_FLIGHT_TTL_MS = 30_000;
+
+/**
+ * Safety net for a promise that never settles, NOT the normal cleanup path —
+ * `promise.then(drop, drop)` below does that the moment the call resolves.
+ *
+ * MUST stay above UPSTREAM_TIMEOUT_MS, and that is why it is derived from it
+ * rather than written as a literal. The upstream call is bounded at 60s to
+ * ride out a Render cold start; at the previous flat 30s this timer would fire
+ * while a slow rotation was still in flight, drop the entry, and let a second
+ * caller start a SECOND rotation of the same single-use refresh token — the
+ * exact double-chain this map exists to prevent, whose punishment is
+ * `revokeAllForAccount` signing the operator out of every device. The failure
+ * would only ever show up against a sleeping backend, which is precisely when
+ * nobody is looking for it.
+ */
+const IN_FLIGHT_TTL_MS = UPSTREAM_TIMEOUT_MS + 30_000;
 
 function dedupe(rawToken: string): Promise<RefreshResponseWire> {
   const key = createHash('sha256').update(rawToken).digest('hex');

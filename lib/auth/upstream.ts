@@ -18,6 +18,24 @@ export interface UpstreamError {
   phone?: string;
 }
 
+/**
+ * Ceiling for a single upstream call, sized for a Render free-tier cold start
+ * (~30-60s) rather than a healthy request — see the note on the axios client
+ * in lib/api/http.ts.
+ *
+ * Bare `fetch` is NOT unbounded but its undici default is ~300s, which on the
+ * login path means a spinner that outlives the user's patience by minutes. An
+ * explicit signal makes the ceiling deliberate and reviewable.
+ *
+ * COUPLED to IN_FLIGHT_TTL_MS in app/api/auth/refresh/route.ts, which must
+ * stay comfortably ABOVE this value. That map collapses concurrent rotations
+ * of the same refresh token onto one upstream call; if its entry were dropped
+ * while a slow call was still in flight, a second caller would start a second
+ * rotation of the same single-use token, trip the backend's reuse detection,
+ * and sign the account out of every device.
+ */
+export const UPSTREAM_TIMEOUT_MS = 60_000;
+
 export class AuthUpstreamError extends Error implements UpstreamError {
   status: number;
   errorCode: string | null;
@@ -40,12 +58,24 @@ async function post<T>(path: string, body: unknown): Promise<T> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       cache: 'no-store',
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
-  } catch {
+  } catch (err) {
+    // Separate the two failures. They look identical in a log and mean
+    // opposite things to the person waiting: a timeout on a sleeping free-tier
+    // instance is fixed by pressing the button again, while "unreachable" is
+    // a wrong URL or a dead service and retrying is pointless.
+    //
+    // Both stay 503, which matters: the refresh route treats 503 as "do not
+    // clear the cookies", so a cold start can never sign anyone out.
+    const timedOut = err instanceof DOMException && err.name === 'TimeoutError';
     throw new AuthUpstreamError({
       status: 503,
-      message: `Cannot reach the Taafi API at ${SERVER_API_ORIGIN}. Is the backend running?`,
-      errorCode: 'upstream_unreachable',
+      message: timedOut
+        ? 'The Taafi API did not respond in time. It sleeps after 15 minutes ' +
+          'idle and the first request has to wait for it to wake — try once more.'
+        : `Cannot reach the Taafi API at ${SERVER_API_ORIGIN}. Is the backend running?`,
+      errorCode: timedOut ? 'upstream_timeout' : 'upstream_unreachable',
     });
   }
 
@@ -122,6 +152,7 @@ export async function completePasswordReset(input: {
       },
       body: JSON.stringify({ newPassword: input.newPassword }),
       cache: 'no-store',
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     },
   );
   if (!res.ok) {
