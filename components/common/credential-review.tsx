@@ -255,7 +255,7 @@ export function CredentialReview({ provider }: { provider: ProviderWire }) {
             <dl className="space-y-2.5 text-sm">
               <Row label="Medical college" value={provider.medical_college} />
               <Row
-                label="Graduated"
+                label="Passing year"
                 value={
                   provider.graduation_year
                     ? String(provider.graduation_year)

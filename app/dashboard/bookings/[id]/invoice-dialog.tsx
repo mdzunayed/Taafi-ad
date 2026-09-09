@@ -51,6 +51,14 @@ export function InvoiceDialog({
   const queryClient = useQueryClient();
   const depositPaid = Boolean(booking.deposit_paid_at);
 
+  // Pricing an advance on a visit a clinician is ALREADY on. The server keeps
+  // the booking's status where it is in this case (see the in-visit branch in
+  // routes/admin.js), so quoting here does not un-dispatch anyone — but it
+  // does put the visit on hold until the money is in, which is a different
+  // thing to do than quoting a booking nobody has been sent to yet. Say so.
+  const IN_VISIT = ['assigned', 'enroute', 'on_the_way', 'arrived', 'in_service'];
+  const inVisit = !depositPaid && IN_VISIT.includes(String(booking.status ?? ''));
+
   const [fee, setFee] = useState(String(booking.final_price ?? booking.offered_budget ?? ''));
   const [deposit, setDepositValue] = useState(
     String(booking.required_deposit ?? booking.deposit_quoted_amount ?? ''),
@@ -107,7 +115,12 @@ export function InvoiceDialog({
           <DialogDescription>
             {depositPaid
               ? 'The deposit is already paid and cannot be changed. Only the final service fee and discount are editable.'
-              : 'Quote the total service fee and the advance the patient must pay to confirm this visit.'}
+              : inVisit
+                ? 'This visit is already dispatched. Setting an advance here keeps the ' +
+                  'clinician assigned, but puts the visit ON HOLD: they cannot start ' +
+                  'service until the advance is paid, or until you verify the cash they ' +
+                  'record collecting at the door.'
+                : 'Quote the total service fee and the advance the patient must pay to confirm this visit.'}
           </DialogDescription>
         </DialogHeader>
 
