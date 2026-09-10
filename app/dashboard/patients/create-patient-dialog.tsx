@@ -90,7 +90,7 @@ export function CreatePatientDialog() {
             <UserPlus className="size-4" />
             Add patient
           </Button>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent mobileFullscreen className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>Add a patient</DialogTitle>
               <DialogDescription>

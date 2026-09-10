@@ -26,7 +26,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { GripVertical } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { TableBody, TableCell, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table';
 import { normalizeError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
 
@@ -40,8 +40,14 @@ import { cn } from '@/lib/utils';
  * contract is identical, the plumbing lives here once and the tables differ
  * only in their columns.
  *
- * Two deliberate choices:
+ * Three deliberate choices:
  *
+ *  - **This component owns the `<table>`, header included.** `DndContext`
+ *    renders its own screen-reader description and live region as ordinary
+ *    `div`s among its children, and a `div` between `<table>` and `<tbody>` is
+ *    invalid HTML: the browser hoists it out while parsing, the server markup
+ *    and the client tree stop matching, and React reports a hydration
+ *    mismatch. Owning the table is what keeps the context strictly outside it.
  *  - **Dragging is handle-only.** The listeners are attached to the grip, not
  *    the row, because these rows carry a Live switch and a delete button; a
  *    row-wide drag sensor turns every toggle into a 5px drag gesture that
@@ -128,20 +134,23 @@ function SortableRow({
 }
 
 /**
- * Wraps the rows in a `DndContext` and renders them as a `<TableBody>`.
+ * Renders `items` as a sortable table.
  *
  * `items` must already be in display order — this component reorders the array
  * it is handed and reports the resulting id sequence; it does not sort.
  */
-export function SortableRows<T extends { id: string }>({
+export function SortableTable<T extends { id: string }>({
   items,
   onReorder,
   disabled = false,
+  header,
   children,
 }: {
   items: T[];
   onReorder: (ids: string[]) => void;
   disabled?: boolean;
+  /** The `<TableHeader>` to render inside the `<Table>` this owns. */
+  header: React.ReactNode;
   children: (row: T, index: number) => React.ReactNode;
 }) {
   const sensors = useSensors(
@@ -170,17 +179,23 @@ export function SortableRows<T extends { id: string }>({
       collisionDetection={closestCenter}
       // Rows can only trade places within their own table; without these a row
       // can be dragged sideways out of the table and dropped anywhere.
+      // `restrictToParentElement` measures the dragged row's own parent — the
+      // `<tbody>` — so it is unaffected by the context sitting outside the
+      // table.
       modifiers={[restrictToVerticalAxis, restrictToParentElement]}
       onDragEnd={onDragEnd}
     >
       <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-        <TableBody>
-          {items.map((row, index) => (
-            <SortableRow key={row.id} id={row.id} disabled={disabled}>
-              {children(row, index)}
-            </SortableRow>
-          ))}
-        </TableBody>
+        <Table>
+          {header}
+          <TableBody>
+            {items.map((row, index) => (
+              <SortableRow key={row.id} id={row.id} disabled={disabled}>
+                {children(row, index)}
+              </SortableRow>
+            ))}
+          </TableBody>
+        </Table>
       </SortableContext>
     </DndContext>
   );

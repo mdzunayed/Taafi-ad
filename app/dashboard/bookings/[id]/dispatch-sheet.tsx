@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, MapPin, Star, UserRound, X } from 'lucide-react';
+import { Loader2, Lock, MapPin, Star, UserRound, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -240,13 +240,24 @@ export function DispatchSheet({
    * is inert instead of discovering it on submit.
    */
   const feeSet = Number(booking.final_price ?? 0) > 0;
-  const depositSettled = Boolean(booking.deposit_paid_at);
+  /**
+   * THE payment gate.
+   *
+   * `is_payment_confirmed` is derived server-side from the settlement stamps
+   * (see `projectInvoice` in `backend/src/models/CareRequest.js`), so it agrees
+   * with the money by construction. The fallback reproduces that derivation for
+   * a row served by an older backend — checking `deposit_amount` alongside the
+   * timestamp, because an in-visit booking settles without its status moving.
+   */
+  const paymentConfirmed =
+    booking.is_payment_confirmed ??
+    (Boolean(booking.deposit_paid_at) || Number(booking.deposit_amount ?? 0) > 0);
   const assignable = (ASSIGNABLE_STATUSES as readonly string[]).includes(
     booking.status,
   );
   const blockers: string[] = [];
   if (!feeSet) blockers.push('a final service fee has not been set');
-  if (!depositSettled) blockers.push('the advance deposit has not been paid');
+  if (!paymentConfirmed) blockers.push('the advance deposit has not been paid');
   if (!assignable) blockers.push(`the booking is "${booking.status}"`);
 
   const needsDoctor = mode === 'DOCTOR_ONLY' || mode === 'DUAL_TEAM';
@@ -308,6 +319,34 @@ export function DispatchSheet({
             </Alert>
           )}
 
+          {/*
+            THE ASSIGNMENT GATE, rendered as a wall rather than a greyed list.
+
+            Until the advance is in, no clinician may be selected at all. A
+            disabled roster would still show names, distances and workloads —
+            an operator would pick someone, find the button inert, and read that
+            as a bug in the roster rather than as "this visit is not paid for".
+            Stating the one blocking fact, and nothing else, is what makes the
+            next step obvious.
+
+            It also keeps three candidate rosters off the wire for a booking
+            nobody can be dispatched to: each list is its own request, and they
+            are the most expensive reads on this page.
+          */}
+          {!paymentConfirmed ? (
+            <div className="space-y-3 rounded-lg border border-dashed p-6 text-center">
+              <Lock className="text-muted-foreground mx-auto size-8" />
+              <div className="space-y-1">
+                <p className="font-medium">Assignment is locked</p>
+                <p className="text-muted-foreground mx-auto max-w-sm text-sm">
+                  {feeSet
+                    ? 'No clinician can be selected until the advance deposit is received. Confirm the received amount on the booking’s Money card, then dispatch.'
+                    : 'This booking has no invoice yet. Build the invoice and quote an advance, then confirm the payment to unlock dispatch.'}
+                </p>
+              </div>
+            </div>
+          ) : (
+          <>
           <div className="space-y-2">
             <h4 className="text-sm font-medium">Team shape</h4>
             <ToggleGroup
@@ -396,6 +435,8 @@ export function DispatchSheet({
               )}
             </div>
           </details>
+          </>
+          )}
         </div>
 
         <SheetFooter>

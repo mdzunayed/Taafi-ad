@@ -156,7 +156,7 @@ export function AccountActions({ account }: { account: AdminAccountWire }) {
       </div>
 
       <Dialog open={action !== null} onOpenChange={(open) => !open && close()}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent mobileFullscreen className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{TITLE[action ?? 'profile']}</DialogTitle>
             <DialogDescription>

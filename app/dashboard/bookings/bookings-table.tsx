@@ -29,9 +29,18 @@ import { ApiErrorState } from '@/components/rbac/api-error-state';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { StatusBadge } from '@/components/common/status-badge';
 import { EmptyState, TableSkeleton } from '@/components/data/states';
+import {
+  DataCard,
+  DataCardActions,
+  DataCardBody,
+  DataCardField,
+  DataCardHeader,
+  ResponsiveTable,
+} from '@/components/data/responsive-table';
+import { PatientContactActions } from '@/components/bookings/patient-contact-actions';
 import { bulkUpdateStatus, listBookings } from '@/lib/api/bookings';
 import { qk } from '@/lib/api/query-keys';
-import { dateTime, humanize, money } from '@/lib/format';
+import { bookingRef, dateTime, humanize, money } from '@/lib/format';
 import { normalizeError } from '@/lib/api/errors';
 import type { BookingWire } from '@/types/wire/booking';
 
@@ -52,7 +61,12 @@ export function BookingsTable({ highlight }: { highlight?: string }) {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<string>('all');
-  const highlightRow = useRef<HTMLTableRowElement | null>(null);
+  /**
+   * Widened from `HTMLTableRowElement` because the highlighted row is a `<tr>`
+   * on a desktop and a `<div>` card on a phone. Only one of the two is ever
+   * mounted, so the ref still holds exactly one node.
+   */
+  const highlightRow = useRef<HTMLElement | null>(null);
   const scrolled = useRef(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkAction, setBulkAction] = useState<'rejected' | 'cancelled' | null>(
@@ -113,6 +127,17 @@ export function BookingsTable({ highlight }: { highlight?: string }) {
     highlightRow.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [highlight, rows]);
 
+  /**
+   * A callback ref rather than the object handed to two elements, because the
+   * highlighted booking is rendered TWICE — once as a table row, once as a card
+   * — and only the one its breakpoint selects is in the DOM. Assigning only on
+   * mount means the hidden twin's unmount (`node === null`) cannot blank the
+   * reference the effect above is about to read.
+   */
+  const captureHighlight = (node: HTMLElement | null) => {
+    if (node) highlightRow.current = node;
+  };
+
   function toggle(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -131,7 +156,7 @@ export function BookingsTable({ highlight }: { highlight?: string }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[220px] flex-1">
+        <div className="relative min-w-0 flex-1 basis-full sm:basis-auto">
           <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
           <Input
             placeholder="Search patient, service, area or phone"
@@ -141,7 +166,7 @@ export function BookingsTable({ highlight }: { highlight?: string }) {
           />
         </div>
         <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="w-[220px]">
+          <SelectTrigger className="w-full sm:w-[220px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -196,7 +221,18 @@ export function BookingsTable({ highlight }: { highlight?: string }) {
           description="Try a different status filter or clear the search."
         />
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
+        <ResponsiveTable
+          cards={rows.map((booking: BookingWire) => (
+            <BookingCard
+              key={booking.id}
+              booking={booking}
+              highlighted={booking.id === highlight}
+              ref={booking.id === highlight ? captureHighlight : undefined}
+              selected={selected.has(booking.id)}
+              onToggle={() => toggle(booking.id)}
+            />
+          ))}
+        >
           <Table>
             <TableHeader>
               <TableRow>
@@ -214,7 +250,7 @@ export function BookingsTable({ highlight }: { highlight?: string }) {
               {rows.map((booking: BookingWire) => (
                 <TableRow
                   key={booking.id}
-                  ref={booking.id === highlight ? highlightRow : undefined}
+                  ref={booking.id === highlight ? captureHighlight : undefined}
                   className={
                     booking.id === highlight
                       ? 'bg-accent/50 hover:bg-accent/60'
@@ -256,7 +292,7 @@ export function BookingsTable({ highlight }: { highlight?: string }) {
               ))}
             </TableBody>
           </Table>
-        </div>
+        </ResponsiveTable>
       )}
 
       <ConfirmDialog
@@ -276,5 +312,95 @@ export function BookingsTable({ highlight }: { highlight?: string }) {
         }}
       />
     </div>
+  );
+}
+
+/**
+ * One booking as a card, for the `< md` view.
+ *
+ * The column order is not preserved and should not be. A table is read left to
+ * right by an operator who already knows what each column means; a card is read
+ * top to bottom by someone holding a phone, and the questions come in a
+ * different order — WHICH booking is this (the reference), what STATE is it in,
+ * WHO is it for, and then the detail. The fee sits at the bottom of the body
+ * where it reads as a total rather than as one more field.
+ *
+ * The three actions in the footer are the three things worth doing from a
+ * list: ring them, message them, or open the booking. They are the same pair of
+ * hand-offs the detail screen offers, sharing one `usePatientContact` so the
+ * WhatsApp text a patient receives does not depend on which screen it was sent
+ * from.
+ */
+function BookingCard({
+  booking,
+  highlighted,
+  selected,
+  onToggle,
+  ref,
+}: {
+  booking: BookingWire;
+  highlighted: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  ref?: (node: HTMLElement | null) => void;
+}) {
+  return (
+    <DataCard
+      ref={ref}
+      className={highlighted ? 'ring-primary/40 ring-2' : undefined}
+    >
+      <DataCardHeader
+        primary={
+          <>
+            <Checkbox
+              checked={selected}
+              onCheckedChange={onToggle}
+              aria-label={`Select booking for ${booking.patient_name}`}
+            />
+            {/* The id's tail, which is the reference an operator reads to a
+                patient on the phone and the string the search box above
+                matches. The full 24-hex ObjectId is unspeakable and would not
+                fit here anyway. */}
+            <span className="font-mono text-xs font-medium">
+              #{bookingRef(booking.id)}
+            </span>
+          </>
+        }
+        secondary={<StatusBadge status={booking.status} />}
+      />
+
+      <DataCardBody>
+        <div className="min-w-0">
+          <p className="truncate font-medium">{booking.patient_name}</p>
+          <p className="text-muted-foreground truncate text-xs">
+            {booking.patient_phone || 'No phone on file'}
+          </p>
+        </div>
+        <DataCardField label="Service" value={booking.care_type} />
+        <DataCardField label="Area" value={booking.area || '—'} />
+        <DataCardField label="Created" value={dateTime(booking.created_at)} />
+        <DataCardField
+          label="Fee"
+          value={
+            <span className="font-medium tabular-nums">
+              {money(booking.final_price ?? booking.offered_budget)}
+            </span>
+          }
+        />
+      </DataCardBody>
+
+      <DataCardActions>
+        <PatientContactActions
+          layout="inline"
+          bookingId={booking.id}
+          phone={booking.patient_phone}
+          patientName={booking.patient_name}
+          serviceName={booking.care_type}
+        />
+        <Button variant="default" size="sm" asChild>
+          <Link href={`/dashboard/bookings/${booking.id}`}>View details</Link>
+        </Button>
+      </DataCardActions>
+    </DataCard>
   );
 }

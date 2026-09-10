@@ -167,6 +167,12 @@ export interface ServiceWire extends CmsItem {
   categorySlugs?: string[];
   categorySlug?: string | null;
   isUrgentAvailable?: boolean;
+  /**
+   * Back-office only: billable on an invoice, excluded from every public
+   * catalog read. Enforced server-side by `PUBLIC_SERVICE_FILTER`, not by this
+   * console — see `backend/src/models/Service.js`.
+   */
+  isAdminOnly?: boolean;
   provider_type?: string | null;
   /** Whether `provider_type` was set by an admin or inferred from the title. */
   provider_type_source?: 'assigned' | 'inferred' | 'none';
@@ -360,6 +366,21 @@ export const services = {
   ...serviceCollection,
   list: async (): Promise<ServiceWire[]> => {
     const rows = await serviceCollection.list();
+    return rows.map((s) => ({ ...s, isActive: isServiceActive(s) }));
+  },
+  /**
+   * The CMS list: storefront rows AND back-office ones, from the authenticated
+   * `GET /api/services/manage`.
+   *
+   * `list` above stays on the public route, which excludes back-office rows in
+   * the database query itself. That is deliberate and worth keeping: every
+   * service picker in this console reads `list`, so a row that must never be
+   * bookable or linkable cannot reach one even if a picker forgets to filter.
+   * Only the catalog page, which has a section for them, asks for this.
+   */
+  listAll: async (): Promise<ServiceWire[]> => {
+    const res = await api.get(`${P.content}/services/manage`);
+    const rows = unwrapArray<ServiceWire>(res, '/api/services/manage');
     return rows.map((s) => ({ ...s, isActive: isServiceActive(s) }));
   },
   setActive: async (id: string, isActive: boolean): Promise<ServiceWire> => {

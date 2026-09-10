@@ -7,6 +7,7 @@ import {
   readSessionFromServer,
   setToken,
 } from './token-store';
+import { isSessionOver, markSessionOver } from './session-state';
 
 /**
  * Refresh serialisation.
@@ -82,6 +83,11 @@ async function rotate(staleToken: string | null): Promise<SessionPayload | null>
  * Returns the fresh token, or null when the session is over.
  */
 export function ensureFreshToken(): Promise<SessionPayload | null> {
+  // The session is already over. Rotating now would consume the single-use
+  // refresh credential on behalf of a document that is on its way to /login,
+  // and a rotation that lands after the redirect is an orphaned chain — the
+  // exact thing the reuse detector signs every device out over.
+  if (isSessionOver()) return Promise.resolve(null);
   if (inFlight) return inFlight;
   const stale = peekToken();
   inFlight = rotate(stale)
@@ -92,8 +98,22 @@ export function ensureFreshToken(): Promise<SessionPayload | null> {
   return inFlight;
 }
 
-/** Terminal: drop local state, tell the other tabs, and go to /login. */
+/**
+ * Terminal: latch the session closed, drop local state, tell the other tabs,
+ * and go to /login.
+ *
+ * Idempotent, and that is load-bearing rather than defensive. The overview
+ * polls three queries on the same 30s tick, so an expiry produces three
+ * simultaneous 401s that all land here. Without the latch that is three
+ * sign-out broadcasts and three `location.replace` calls, and — because
+ * `clearToken()` has already run by the second one — a fresh
+ * `/api/auth/session` bootstrap behind each of them.
+ *
+ * Latching BEFORE `clearToken()` is deliberate: it closes the window in which
+ * a concurrent request could observe a null token and start a bootstrap.
+ */
 export function endSession(reason: 'session_expired' | 'account_inactive'): void {
+  if (!markSessionOver()) return;
   clearToken();
   broadcastSignOut(reason);
   if (typeof window !== 'undefined') {

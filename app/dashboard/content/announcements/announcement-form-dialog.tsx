@@ -80,7 +80,10 @@ export function AnnouncementFormDialog({
           </Button>
         )}
 
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+        <DialogContent
+          mobileFullscreen
+          className="max-h-[90vh] overflow-y-auto sm:max-w-xl"
+        >
           <AnnouncementForm
             announcement={announcement}
             onClose={() => setOpen(false)}

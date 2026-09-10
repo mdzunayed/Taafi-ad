@@ -90,7 +90,7 @@ export function ConfirmPaymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent mobileFullscreen className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Confirm {money(quotedAmount)} received?</DialogTitle>
           <DialogDescription>

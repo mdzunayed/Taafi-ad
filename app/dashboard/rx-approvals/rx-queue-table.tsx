@@ -18,6 +18,7 @@ import { ApiErrorState } from '@/components/rbac/api-error-state';
 import { EmptyState, TableSkeleton } from '@/components/data/states';
 import { listPrescriptionQueue, type RxQueueFilter } from '@/lib/api/system';
 import { qk } from '@/lib/api/query-keys';
+import { pollWhileSignedIn } from '@/lib/auth/session-state';
 import { relativeTime } from '@/lib/format';
 import type { PrescriptionWire } from '@/types/wire/misc';
 
@@ -50,7 +51,9 @@ export function RxQueueTable({ mode }: { mode: 'queue' | 'decided' }) {
   const query = useQuery({
     queryKey: qk.prescriptions(filter ?? 'queue'),
     queryFn: () => listPrescriptionQueue(filter),
-    refetchInterval: mode === 'queue' ? 60_000 : false,
+    // Function form so the poll stops on sign-out rather than running until
+    // the redirect lands. See lib/auth/session-state.ts.
+    refetchInterval: mode === 'queue' ? pollWhileSignedIn(60_000) : false,
   });
 
   return (

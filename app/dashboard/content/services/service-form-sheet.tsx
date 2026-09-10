@@ -52,9 +52,13 @@ import { money } from '@/lib/format';
  *  - The write is **multipart** (the image rides along) and `Content-Type`
  *    must never be set by hand — doing so drops the boundary and the server
  *    receives an empty body.
- *  - `POST /api/services` **requires an image**; `PUT` does not, and is
+ *  - `POST /api/services` **requires an image**, unless `isAdminOnly` is set —
+ *    a back-office row is excluded from every public catalog read, so there is
+ *    no card for the artwork to fill. `PUT` does not require one, and is
  *    partial, so the image key is only sent when a new file was picked —
- *    otherwise saving a text edit would blank the artwork.
+ *    otherwise saving a text edit would blank the artwork. The one `PUT` that
+ *    does demand a file is a back-office row being published to the storefront
+ *    with no image on it.
  *  - `categoryIds` is always sent, including empty. The server reads an absent
  *    key as "leave the assignments alone" and `[]` as "clear them", so
  *    unticking the last pill only works if the empty array is transmitted.
@@ -98,7 +102,35 @@ function toInput(value: number | null | undefined): string {
  * artwork, and a checkbox per category pill), and a panel that keeps the
  * catalog visible beside it is easier to work down than a modal that covers it.
  */
-export function ServiceFormSheet({ service }: { service?: ServiceWire }) {
+export function ServiceFormSheet({
+  service,
+  labelled = false,
+  adminOnly = false,
+}: {
+  service?: ServiceWire;
+  /**
+   * Show the word "Edit" beside the pencil.
+   *
+   * Off in the desktop table, where the button sits in a 48px column next to
+   * six other columns and the icon is unambiguous from its position. On in the
+   * mobile card, where the same button shares a footer row with "Remove" — an
+   * icon on its own, stretched to half the width of a card, reads as a
+   * mystery rather than as an action.
+   */
+  labelled?: boolean;
+  /**
+   * Open the form pre-seeded as a back-office row: "Back office only" already
+   * switched on, with the artwork and category fields it hides already gone.
+   *
+   * This is what the button in the Internal services header passes. The toggle
+   * itself stays live — seeding a default is not the same as forcing one, and
+   * somebody who clicked the wrong button can switch it back off.
+   *
+   * CREATE MODE ONLY. When `service` is given the stored flag wins, so an edit
+   * can never be silently re-flagged by the trigger it was opened from.
+   */
+  adminOnly?: boolean;
+}) {
   const editing = service !== undefined;
   const [open, setOpen] = useState(false);
 
@@ -110,22 +142,34 @@ export function ServiceFormSheet({ service }: { service?: ServiceWire }) {
       <Sheet open={open} onOpenChange={setOpen}>
         {editing ? (
           <Button
-            variant="ghost"
-            size="icon"
+            variant={labelled ? 'outline' : 'ghost'}
+            size={labelled ? 'sm' : 'icon'}
             onClick={() => setOpen(true)}
             aria-label="Edit service"
           >
             <Pencil className="size-4" />
+            {labelled && 'Edit'}
           </Button>
         ) : (
-          <Button size="sm" onClick={() => setOpen(true)}>
+          // Outlined in the internal section so the two "add" buttons on this
+          // page read as siblings. Two filled primaries would ask the operator
+          // to choose between them before they know what the second one is.
+          <Button
+            size="sm"
+            variant={adminOnly ? 'outline' : 'default'}
+            onClick={() => setOpen(true)}
+          >
             <Plus className="size-4" />
-            Add service
+            {adminOnly ? 'Add internal service' : 'Add service'}
           </Button>
         )}
 
         <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
-          <ServiceForm service={service} onClose={() => setOpen(false)} />
+          <ServiceForm
+            service={service}
+            adminOnly={adminOnly}
+            onClose={() => setOpen(false)}
+          />
         </SheetContent>
       </Sheet>
     </DisabledWhenDenied>
@@ -134,9 +178,12 @@ export function ServiceFormSheet({ service }: { service?: ServiceWire }) {
 
 function ServiceForm({
   service,
+  adminOnly: adminOnlyDefault = false,
   onClose,
 }: {
   service?: ServiceWire;
+  /** Seed for the "Back office only" switch on a fresh form. See the sheet. */
+  adminOnly?: boolean;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -155,10 +202,36 @@ function ServiceForm({
     service?.provider_type ?? UNTAGGED,
   );
   const [urgent, setUrgent] = useState(service?.isUrgentAvailable ?? false);
+  // The seed is the whole preset — no effect, no reset. Radix unmounts this
+  // form on close, so every open re-seeds from these initializers.
+  const [adminOnly, setAdminOnly] = useState(
+    service?.isAdminOnly ?? adminOnlyDefault,
+  );
   const [isActive, setIsActive] = useState(service?.isActive ?? true);
   const [pillIds, setPillIds] = useState<string[]>(service?.categoryIds ?? []);
 
   const [file, setFile] = useState<File | null>(null);
+
+  /**
+   * Turning "Back office only" on strips the two storefront-only fields.
+   *
+   * The pills are CLEARED, not merely hidden. A hidden input whose value still
+   * ships is the bug this pattern usually grows: the row would save carrying
+   * assignments to Home pills it can never appear under, and flipping the
+   * toggle back later would silently republish it to categories nobody chose
+   * in this sitting. Emptying the selection keeps what the operator sees and
+   * what gets sent the same thing.
+   *
+   * The picked file goes for the same reason — an upload started before the
+   * toggle was flipped must not ride along on a row with nowhere to show it.
+   */
+  function handleAdminOnlyChange(on: boolean) {
+    setAdminOnly(on);
+    if (on) {
+      setPillIds([]);
+      setFile(null);
+    }
+  }
 
   // The pills an admin can tick. Shares the cache with the categories table.
   const pills = useQuery({
@@ -179,13 +252,23 @@ function ServiceForm({
 
   // NOTE: no pricing term here. A service with both money fields blank is
   // valid and savable — that is the point of this screen.
+  // Mirrors `needsCatalogImage` in routes/services.js, both ends of it:
+  //
+  //  - POST requires an image unless the row is back-office only. Those never
+  //    reach a patient surface, so there is no card for artwork to fill.
+  //  - PUT keeps the existing image, with one exception — a back-office row
+  //    being published to the storefront with none on it. That is the single
+  //    edit that has to collect a file before it can go through.
+  const needsImage =
+    !adminOnly &&
+    (editing ? service.isAdminOnly === true && !service.imageUrl : true);
+
   const canSave =
     title.trim() !== '' &&
     (baseFeeNum === null || baseFeeNum >= 0) &&
     (depositNum === null || depositNum >= 0) &&
     !unpayablePair &&
-    // POST requires an image; PUT keeps the existing one.
-    (editing || file !== null);
+    (!needsImage || file !== null);
 
   const save = useMutation({
     mutationFn: () => {
@@ -203,6 +286,7 @@ function ServiceForm({
       fd.append('defaultBaseFee', baseFee.trim());
       fd.append('defaultAdvanceDeposit', deposit.trim());
       fd.append('isUrgentAvailable', String(urgent));
+      fd.append('isAdminOnly', String(adminOnly));
       fd.append('status', isActive ? 'active' : 'inactive');
       fd.append('provider_type', providerType === UNTAGGED ? '' : providerType);
       // Always sent, empty included — see the file header.
@@ -226,11 +310,25 @@ function ServiceForm({
 
   return (
     <>
+      {/*
+        Both lines follow the switch rather than the trigger that opened the
+        sheet, so turning "Back office only" off mid-form corrects them. The
+        storefront wording was the only wording this header had, and it was
+        wrong on every back-office row — including, now that they are reachable
+        from the catalog page at all, every edit of one.
+      */}
       <SheetHeader>
-        <SheetTitle>{editing ? 'Edit service' : 'Add service'}</SheetTitle>
+        <SheetTitle>
+          {editing
+            ? 'Edit service'
+            : adminOnly
+              ? 'Add internal service'
+              : 'Add service'}
+        </SheetTitle>
         <SheetDescription>
-          What patients can book, and what the booking fee dialog suggests when
-          an operator quotes it.
+          {adminOnly
+            ? 'A charge the back office can put on an invoice. Never shown in the patient app, and patients cannot book it.'
+            : 'What patients can book, and what the booking fee dialog suggests when an operator quotes it.'}
         </SheetDescription>
       </SheetHeader>
 
@@ -321,7 +419,7 @@ function ServiceForm({
 
         <Separator />
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className={adminOnly ? 'space-y-2' : 'grid gap-4 sm:grid-cols-2'}>
           <div className="space-y-2">
             <Label htmlFor="svc-provider">Who attends</Label>
             <Select value={providerType} onValueChange={setProviderType}>
@@ -346,52 +444,65 @@ function ServiceForm({
             )}
           </div>
 
-          <ImageUploader
-            label="Image"
-            required={!editing}
-            currentUrl={service?.imageUrl ?? null}
-            file={file}
-            onFileChange={setFile}
-            hint={
-              editing
-                ? 'Optional — leave it alone and the current image is kept.'
-                : 'Required. The server refuses a new service without one.'
-            }
-          />
+          {/* Unmounted, not disabled, on a back-office row. There is no
+              patient-facing card for the artwork to fill, so a greyed-out
+              uploader would only pose a question with no useful answer. */}
+          {!adminOnly && (
+            <ImageUploader
+              label="Image"
+              required={needsImage}
+              currentUrl={service?.imageUrl ?? null}
+              file={file}
+              onFileChange={setFile}
+              hint={
+                needsImage
+                  ? 'Required. This service appears in the patient catalog.'
+                  : 'Optional — leave it alone and the current image is kept.'
+              }
+            />
+          )}
         </div>
 
-        <div className="space-y-2">
-          <Label>Home categories</Label>
-          <p className="text-muted-foreground text-xs">
-            Which pills this service appears under. A service tagged with none
-            is catalog-only — there is no &ldquo;All&rdquo; pill for it to fall
-            back to.
-          </p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {(pills.data ?? []).map((c: CategoryWire) => (
-              <label
-                key={c.id}
-                className="flex items-center gap-2 text-sm"
-                htmlFor={`pill-${c.id}`}
-              >
-                <Checkbox
-                  id={`pill-${c.id}`}
-                  checked={pillIds.includes(c.id)}
-                  onCheckedChange={(on) => togglePill(c.id, on === true)}
-                />
-                <span>{c.nameEn ?? c.slug}</span>
-                {c.isActive === false && (
-                  <span className="text-muted-foreground text-xs">(hidden)</span>
-                )}
-              </label>
-            ))}
-            {pills.data?.length === 0 && (
-              <p className="text-muted-foreground text-xs">
-                No categories yet — create one first.
-              </p>
-            )}
+        {/* Same reasoning as the uploader: a back-office row is excluded from
+            every public catalog read, so a Home pill it is tagged with can
+            never be the pill it shows under. `handleAdminOnlyChange` empties
+            the selection on the way in, so nothing hidden is still sent. */}
+        {!adminOnly && (
+          <div className="space-y-2">
+            <Label>Home categories</Label>
+            <p className="text-muted-foreground text-xs">
+              Which pills this service appears under. A service tagged with none
+              is catalog-only — there is no &ldquo;All&rdquo; pill for it to
+              fall back to.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(pills.data ?? []).map((c: CategoryWire) => (
+                <label
+                  key={c.id}
+                  className="flex items-center gap-2 text-sm"
+                  htmlFor={`pill-${c.id}`}
+                >
+                  <Checkbox
+                    id={`pill-${c.id}`}
+                    checked={pillIds.includes(c.id)}
+                    onCheckedChange={(on) => togglePill(c.id, on === true)}
+                  />
+                  <span>{c.nameEn ?? c.slug}</span>
+                  {c.isActive === false && (
+                    <span className="text-muted-foreground text-xs">
+                      (hidden)
+                    </span>
+                  )}
+                </label>
+              ))}
+              {pills.data?.length === 0 && (
+                <p className="text-muted-foreground text-xs">
+                  No categories yet — create one first.
+                </p>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="flex items-center justify-between rounded-md border p-3">
           <div>
@@ -401,6 +512,27 @@ function ServiceForm({
             </p>
           </div>
           <Switch id="svc-urgent" checked={urgent} onCheckedChange={setUrgent} />
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div>
+            <Label htmlFor="svc-admin-only">Back office only</Label>
+            {/* Distinct from Live below, and the difference is worth stating:
+                Live off removes the service from EVERYWHERE, including the
+                invoice editor. This keeps it fully billable while removing it
+                from the patient's catalog — for callout surcharges, disposal
+                fees and the like, which are real charges nobody should be able
+                to book for themselves. */}
+            <p className="text-muted-foreground text-xs">
+              Hidden from the patient app and Home, still billable on an
+              invoice.
+            </p>
+          </div>
+          <Switch
+            id="svc-admin-only"
+            checked={adminOnly}
+            onCheckedChange={handleAdminOnlyChange}
+          />
         </div>
 
         <div className="flex items-center justify-between rounded-md border p-3">

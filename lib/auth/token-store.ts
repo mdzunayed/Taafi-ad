@@ -1,6 +1,7 @@
 'use client';
 
 import type { SessionPayload } from '@/types/wire/auth';
+import { isSessionOver } from './session-state';
 
 /**
  * The access token lives HERE — a module-level variable — and nowhere else on
@@ -58,6 +59,11 @@ export async function readSessionFromServer(): Promise<SessionPayload | null> {
  */
 export async function getAccessToken(): Promise<string | null> {
   if (accessToken) return accessToken;
+  // Signed out. `clearToken()` has already nulled the token above, so without
+  // this line every straggling poll would read the cookie back through
+  // /api/auth/session, be handed the same dead credential, and earn another
+  // 401 — the storm described in session-state.ts.
+  if (isSessionOver()) return null;
   if (!bootstrap) {
     bootstrap = readSessionFromServer().finally(() => {
       bootstrap = null;

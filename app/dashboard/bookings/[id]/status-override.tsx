@@ -120,7 +120,7 @@ export function StatusOverrideDialog({
         }
       }}
     >
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent mobileFullscreen className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Override booking status</DialogTitle>
           <DialogDescription>

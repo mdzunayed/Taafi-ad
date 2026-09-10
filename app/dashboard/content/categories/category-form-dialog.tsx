@@ -88,7 +88,10 @@ export function CategoryFormDialog({ category }: { category?: CategoryWire }) {
 
         {/* Radix unmounts these children on close, so each open re-seeds from
             `category` and a cancelled edit leaves nothing behind. */}
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogContent
+          mobileFullscreen
+          className="max-h-[90vh] overflow-y-auto sm:max-w-lg"
+        >
           <CategoryForm category={category} onClose={() => setOpen(false)} />
         </DialogContent>
       </Dialog>

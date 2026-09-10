@@ -4,6 +4,7 @@ import {
   FileCheck2,
   FolderKanban,
   LayoutDashboard,
+  Package,
   Settings,
   Stethoscope,
   Users,
@@ -61,7 +62,23 @@ export const NAV: NavItem[] = [
       { href: '/dashboard/bookings', label: 'All bookings', capability: 'bookings.read' },
       { href: '/dashboard/bookings/new', label: 'Manual booking', capability: 'bookings.create' },
       { href: '/dashboard/bookings/verification', label: 'Payment queue', capability: 'bookings.read' },
+      // Closed bookings and their frozen receipts. Filed here rather than
+      // under Finance: it is read per BOOKING — an operator arrives from a
+      // patient's phone call about one visit — while Finance reasons in
+      // periods and payouts.
+      { href: '/dashboard/bookings/history', label: 'Invoice archive', capability: 'bookings.read' },
     ],
+  },
+  {
+    // Filed under Bookings Ops rather than App Content, even though it is
+    // catalog curation: the only surface that reads it is the invoice editor,
+    // and an operator hunting for "the thing I bill medicines from" looks
+    // where they bill, not where they publish. The write controls inside are
+    // still gated on `content.write`.
+    href: '/dashboard/supplies',
+    label: 'Supplies',
+    icon: Package,
+    capability: 'bookings.read',
   },
   {
     href: '/dashboard/rx-approvals',

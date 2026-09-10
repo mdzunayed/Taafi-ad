@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   QueryClient,
   QueryClientProvider,
@@ -8,6 +8,7 @@ import {
 } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/errors';
+import { onSessionOver } from '@/lib/auth/session-state';
 
 const config: QueryClientConfig = {
   defaultOptions: {
@@ -33,5 +34,19 @@ const config: QueryClientConfig = {
 
 export function QueryProvider({ children }: { children: React.ReactNode }) {
   const [client] = useState(() => new QueryClient(config));
+
+  // Abort everything still in flight the moment the session ends.
+  //
+  // The polled queries drop their own timers (lib/auth/session-state.ts), but
+  // a request already on the wire has up to the client's 60s cold-start budget
+  // left to run. Cancelling here means the sign-out is quiet: no late 401
+  // resolving into a component that is mid-teardown, and no error toast fired
+  // at a user who is already looking at the login screen.
+  //
+  // Cancel only — the cache is deliberately left alone. Clearing it would
+  // re-render every mounted table as empty during the redirect, which reads as
+  // "your data is gone" rather than "you were signed out".
+  useEffect(() => onSessionOver(() => void client.cancelQueries()), [client]);
+
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }

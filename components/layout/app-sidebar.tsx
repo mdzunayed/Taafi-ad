@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -15,6 +16,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  useSidebar,
 } from '@/components/ui/sidebar';
 import { BrandLogo } from '@/components/layout/brand-logo';
 import { NavBadgeSlot } from '@/components/layout/nav-badges';
@@ -39,6 +41,28 @@ function visibleChildren(user: SessionUser, item: NavItem) {
 export function AppSidebar() {
   const pathname = usePathname();
   const { user } = useSession();
+  const { isMobile, openMobile, setOpenMobile } = useSidebar();
+
+  /**
+   * Close the drawer once a navigation has actually happened.
+   *
+   * On desktop the sidebar is furniture and stays put. On a phone it is a
+   * drawer covering three quarters of the screen, and leaving it open over the
+   * page the operator just asked for means every navigation costs a second tap
+   * on the backdrop. Backdrop and Escape dismissal come free from the Sheet
+   * underneath; this covers the third way out, which is following a link.
+   *
+   * Keyed on `pathname` rather than on the click, so it fires when the route
+   * has committed — a link tapped on a slow connection keeps the drawer up
+   * while the page is still resolving, which is the feedback that the tap
+   * registered.
+   */
+  useEffect(() => {
+    if (isMobile && openMobile) setOpenMobile(false);
+    // `openMobile` is read, not tracked: re-running when the drawer OPENS would
+    // shut it again on the same tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   const items = NAV.filter((item) => {
     if (!allowed(user, item.capability)) return false;

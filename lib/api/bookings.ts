@@ -30,6 +30,85 @@ export async function getBooking(id: string): Promise<BookingWire> {
   return unwrapFlat<BookingWire>(res);
 }
 
+// ── The historical invoice archive ─────────────────────────────────────────
+
+export interface CompletedBookingsQuery {
+  /** `completed` (default), `cancelled`, `rejected`, or `all`. */
+  status?: string;
+  /** Matches patient name, phone or care type, server-side. */
+  q?: string;
+  /** ISO dates, filtered on when the booking CLOSED. */
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface CompletedBookingsPage {
+  bookings: BookingWire[];
+  page: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
+}
+
+/**
+ * `GET /admin/bookings/completed` — closed bookings, newest first, each
+ * carrying the frozen `invoice` its receipt is drawn from.
+ *
+ * PAGINATED AND SEARCHED SERVER-SIDE, unlike `listBookings` above. That one is
+ * documented as unpaginated, unlimited, and minting a presigned attachment
+ * grant per row — fine for a working queue that fits on a screen, wrong for an
+ * archive that only grows and that operators actually scroll. Filtering here
+ * happens in Mongo, so the browser never holds a year of bookings to filter
+ * three of them out.
+ */
+export async function listCompletedBookings(
+  query: CompletedBookingsQuery = {},
+): Promise<CompletedBookingsPage> {
+  const res = await api.get(`${P.admin}/bookings/completed`, {
+    // Empty values are dropped rather than sent as `?q=`: the server treats a
+    // blank `from` as an invalid date and a blank `q` as a match-everything
+    // regex, and neither is what an operator clearing a filter meant.
+    params: Object.fromEntries(
+      Object.entries(query).filter(
+        ([, v]) => v !== undefined && v !== null && v !== '',
+      ),
+    ),
+  });
+  const data = (res.data ?? {}) as Record<string, unknown>;
+  return {
+    bookings: Array.isArray(data.bookings)
+      ? (data.bookings as BookingWire[])
+      : [],
+    page: Number(data.page) || 1,
+    limit: Number(data.limit) || 25,
+    total: Number(data.total) || 0,
+    hasMore: data.has_more === true,
+  };
+}
+
+/**
+ * `GET /api/bookings/:id/receipt-pdf` — the server-rendered A4 receipt, as
+ * bytes.
+ *
+ * NOT under `P.admin`. The endpoint lives on the shared bookings router and
+ * admits staff through the same participant check the patient app passes, so
+ * the console and the patient download one document rather than two
+ * implementations of one. Staff access is enforced server-side; this call just
+ * carries the operator's own bearer token like every other.
+ *
+ * Returned as a Blob rather than a link because the download needs an
+ * `Authorization` header, which a bare `<a href>` cannot send. The caller mints
+ * an object URL from it and revokes it after — see the archived-invoice card.
+ */
+export async function fetchReceiptPdf(bookingId: string): Promise<Blob> {
+  const res = await api.get(`/api/bookings/${bookingId}/receipt-pdf`, {
+    responseType: 'blob',
+  });
+  return res.data as Blob;
+}
+
 // ── Dispatch ───────────────────────────────────────────────────────────────
 
 export async function listDispatchCandidates(
@@ -111,6 +190,55 @@ export async function setDeposit(
 }
 
 /** `POST /admin/requests/:id/set-price` — the POST-payment path. */
+/**
+ * `PATCH /admin/bookings/:id/invoice` — the itemized quote.
+ *
+ * SEND LINES, NEVER TOTALS. The server recomputes the subtotal, the discount
+ * amount and the final total from the lines and stores its own arithmetic
+ * (`backend/src/utils/invoiceLineItems.js`). The editor runs the same sums
+ * locally so the operator watches the figure move as they type, but nothing it
+ * computes is ever transmitted — which is what makes a console on a stale
+ * bundle a display bug rather than a mis-billed patient.
+ *
+ * `required_deposit` is optional and may only be sent while the advance is
+ * UNPAID; the server answers 409 otherwise. Omitting it leaves whatever the
+ * booking was already quoted, which is what re-itemizing an in-flight booking
+ * should do.
+ *
+ * Returns the bare updated document, same as `set-deposit`.
+ */
+export async function setInvoice(
+  bookingId: string,
+  body: {
+    line_items: Array<{
+      item_type: 'service' | 'supply' | 'custom';
+      item_id?: string | null;
+      title: string;
+      quantity: number;
+      unit_price: number;
+    }>;
+    /**
+     * Percent off the subtotal, 0–100. MUTUALLY EXCLUSIVE with
+     * `adjusted_discount` — the server rejects both together rather than
+     * picking one, so the caller decides which kind of discount this is.
+     */
+    discount_percentage?: number;
+    /**
+     * A flat waiver in currency, for a reduction that was never a percentage.
+     * The server stores it with a 0 percentage rather than back-computing one:
+     * a derived "19.08%" on the patient's bill would name a decision nobody
+     * made.
+     */
+    adjusted_discount?: number;
+    required_deposit?: number;
+    admin_note?: string;
+    call_summary_notes?: string;
+  },
+): Promise<BookingWire> {
+  const res = await api.patch(`${P.admin}/bookings/${bookingId}/invoice`, body);
+  return unwrapFlat<BookingWire>(res);
+}
+
 export async function setPrice(
   bookingId: string,
   body: {
@@ -126,10 +254,49 @@ export async function setPrice(
 
 // ── Manual creation ────────────────────────────────────────────────────────
 
+/** One line on the invoice the operator builds during the call. */
+export interface ManualLineItem {
+  item_type: 'service' | 'supply' | 'custom';
+  /** The catalog row, or null for a charge the operator typed in. */
+  item_id?: string | null;
+  title: string;
+  quantity: number;
+  /**
+   * What the patient is billed per unit. ALWAYS sent, including when it equals
+   * the catalog price: the catalog's figure is a suggestion, and re-deriving
+   * it server-side would silently re-price a line the operator lowered on the
+   * call.
+   */
+  unit_price: number;
+}
+
 export interface ManualBookingBody {
-  patient_name: string;
-  patient_phone: string;
-  care_type: string;
+  /**
+   * An existing patient, picked out of the search box. Authoritative — the
+   * booking lands on this account even if a phone number typed alongside it
+   * disagrees.
+   */
+  patientId?: string;
+  /**
+   * Quick-register. Resolved BY PHONE first: "new" is the operator's belief
+   * and the number is the truth, so a returning caller they did not recognise
+   * still lands on the account they already sign in with. `age` and `gender`
+   * become the booking's care-recipient block, which is where the responding
+   * clinician reads them.
+   */
+  newPatient?: {
+    name: string;
+    phone: string;
+    address?: string;
+    age?: number;
+    gender?: string;
+  };
+  /**
+   * Free text every list and alert renders. Optional when the invoice carries
+   * a service line — the server takes the catalog's own title from it rather
+   * than making the operator retype it.
+   */
+  care_type?: string;
   service_id?: string | null;
   /** Address parts. The server joins them into the single `location_text` line. */
   house?: string;
@@ -139,13 +306,51 @@ export interface ManualBookingBody {
   /** ISO 8601, or null for "as soon as possible". */
   preferred_time?: string | null;
   duration_hours?: number;
-  /** Optional TOGETHER — sending one without the other is a 400. */
-  total_service_fee?: number;
+
+  /**
+   * The itemized invoice. LINES ONLY — never a total.
+   *
+   * Every figure the form displays is recomputed server-side from these
+   * (`backend/src/utils/invoiceLineItems.js`) before anything is stored, which
+   * is what makes a console running a stale bundle a display bug rather than a
+   * mis-billed patient.
+   */
+  line_items?: ManualLineItem[];
+  /** Percentage form. Mutually exclusive with `adjusted_discount` — sending both is a 400. */
+  discount_percentage?: number;
+  /** Flat-currency waiver. Stores a 0 percentage, because there is no percentage behind it. */
+  adjusted_discount?: number;
+  /** What the patient pays to confirm the visit. Cannot exceed the post-discount total. */
   required_deposit?: number;
+  /** The flat alternative to `line_items`. Ignored when lines are sent. */
+  total_service_fee?: number;
+
+  /**
+   * The money is already in — banknotes over the counter, or a transfer the
+   * operator watched land. Settles the deposit in the same write, putting the
+   * booking straight into the phase the app renders as confirmed.
+   *
+   * `false` leaves it owed, and the patient pays from the app.
+   */
+  depositCollectedInCash?: boolean;
+  /** Which rail a manual transfer arrived on. Left unset for physical cash. */
+  deposit_rail?: 'BKASH' | 'NAGAD' | 'ROCKET' | 'UPAY' | 'BANK_TRANSFER';
+  deposit_reference?: string;
+
+  /**
+   * Dispatch a doctor in the same write. Only legal alongside
+   * `depositCollectedInCash` — the server refuses it otherwise with
+   * `error_code: 'dispatch_requires_deposit'`, because dispatching a booking
+   * whose deposit is unpaid sends a clinician to a home the patient has not
+   * confirmed.
+   */
+  assignedDoctorId?: string;
+
   /** Patient-visible; renders as "Note from Operations" in the app. */
   call_summary_notes?: string;
   /** Internal only. */
   admin_note?: string;
+  /** The symptoms / triage summary from the call. */
   condition_note?: string;
 }
 
@@ -160,21 +365,55 @@ export interface ManualBookingResult extends BookingWire {
 }
 
 /**
+ * The subset of the body that carries structured data.
+ *
+ * Multipart has no types — every part arrives at Express as a string — so these
+ * are JSON-encoded on the way out and `JSON.parse`d by the controller. Listed
+ * explicitly rather than inferred from `typeof === 'object'` so a future field
+ * cannot be silently stringified as `[object Object]`.
+ */
+const STRUCTURED_FIELDS = ['newPatient', 'line_items'] as const;
+
+/**
  * `POST /admin/bookings/manual` — create a booking from a phone call.
  *
- * Resolves the patient by phone number and provisions an account when there
- * is none, so the booking appears in the mobile app's Active Care the moment
- * that patient signs in.
+ * Sends `multipart/form-data` when the operator attached files and plain JSON
+ * otherwise. Both land on the same handler; the multipart branch exists only
+ * because a browser cannot put a file in a JSON body, and paying its encoding
+ * cost on every booking that has no attachment would be pure overhead.
  *
- * Two failure modes worth handling at the call site rather than as a generic
- * toast: a **409** means the patient already holds an active booking (the
- * body carries `active_request_id`), and a **400** with `error_code:
- * 'deposit_exceeds_fee'` means the two money fields disagree.
+ * Failure modes worth handling at the call site rather than as a generic toast:
+ *
+ * - **409** `active_booking_exists` — the patient already holds an open
+ *   booking; the body carries `active_request_id` so the operator can open it.
+ * - **409** `dispatch_requires_deposit` — a doctor was named on a booking whose
+ *   deposit is not in.
+ * - **400** `deposit_exceeds_fee` — the advance is larger than what is owed.
+ * - **413 / 415** — an attachment is over 8 MB, or is not a PDF or image.
  */
 export async function createManualBooking(
   body: ManualBookingBody,
+  attachments: File[] = [],
 ): Promise<ManualBookingResult> {
-  const res = await api.post(`${P.admin}/bookings/manual`, body);
+  if (attachments.length === 0) {
+    const res = await api.post(`${P.admin}/bookings/manual`, body);
+    return unwrapFlat<ManualBookingResult>(res);
+  }
+
+  const form = new FormData();
+  for (const [key, value] of Object.entries(body)) {
+    if (value === undefined || value === null) continue;
+    const structured = (STRUCTURED_FIELDS as readonly string[]).includes(key);
+    form.append(key, structured ? JSON.stringify(value) : String(value));
+  }
+  // The field name multer is registered against. A different one is
+  // LIMIT_UNEXPECTED_FILE, which surfaces as a 400 naming the field.
+  for (const file of attachments) form.append('attachments', file);
+
+  // No explicit Content-Type: the browser has to write the multipart boundary
+  // into it, and setting the header by hand omits that boundary and produces a
+  // body Express cannot parse at all.
+  const res = await api.post(`${P.admin}/bookings/manual`, form);
   return unwrapFlat<ManualBookingResult>(res);
 }
 
@@ -334,4 +573,29 @@ export async function overrideBookingStatus(
 ): Promise<BookingWire> {
   const res = await api.patch(`${P.admin}/bookings/${bookingId}/status`, body);
   return unwrapFlat<BookingWire>(res);
+}
+
+// ── Contact attempts ───────────────────────────────────────────────────────
+
+export type ContactChannel = 'call' | 'whatsapp';
+
+/**
+ * `POST /admin/bookings/:id/log-contact-attempt` — record that an operator
+ * opened a dialer or a WhatsApp thread for this booking's patient.
+ *
+ * Writes ONE audit row (`booking.contact_attempted`) and touches nothing on
+ * the booking itself. It is an intent, not an outcome: the browser cannot see
+ * whether the call connected or the message was ever sent, so the row answers
+ * "who reached out, when, on which channel" and deliberately claims no more
+ * than that.
+ *
+ * BEST-EFFORT AT THE CALL SITE. Never await it ahead of the navigation it
+ * describes and never surface its failure — losing a log line must not delay
+ * or interrupt an operator ringing a patient.
+ */
+export async function logContactAttempt(
+  bookingId: string,
+  channel: ContactChannel,
+): Promise<void> {
+  await api.post(`${P.admin}/bookings/${bookingId}/log-contact-attempt`, { channel });
 }

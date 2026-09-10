@@ -11,7 +11,7 @@ export default function ServicesPage() {
     <>
       <PageHeader
         title="Service catalog"
-        description="What patients can book. Hiding a service stops new bookings without touching the ones in flight."
+        description="What patients can book, and below it the internal charges only the back office can bill. Hiding a service stops new bookings without touching the ones in flight."
       />
       <PermissionGate capability="content.read">
         <ServicesTable />

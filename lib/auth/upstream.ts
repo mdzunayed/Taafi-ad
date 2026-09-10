@@ -98,9 +98,13 @@ async function post<T>(path: string, body: unknown): Promise<T> {
  * `POST /auth/login`.
  *
  * `role: 'admin'` is deliberate: the backend's `dbRolesForClient('admin')`
- * expands to `['admin', 'support_member', 'super_admin']`, so one value
- * matches all three back-office roles. The response still carries the real
- * DB role in `user.role` — it is never collapsed.
+ * expands to the whole back office, so one value matches every staff role.
+ * The response still carries the real DB role in `user.role` — it is never
+ * collapsed.
+ *
+ * That expansion is load-bearing. A back-office role the backend forgets to
+ * list there cannot sign in to this console at all, and it fails as a
+ * role-mismatch 403 rather than anything that names the real cause.
  */
 export function login(input: {
   identifier: string;
@@ -166,4 +170,59 @@ export async function completePasswordReset(input: {
       errorCode: data?.error_code ?? null,
     });
   }
+}
+
+/**
+ * Admin console account recovery. Both calls hit `/api/admin/auth/*`, which
+ * is mounted ABOVE the back-office guard in `backend/src/routes/admin.js` and
+ * is therefore reachable with no session — which is the entire point, since
+ * the caller is someone who cannot sign in.
+ *
+ * The form asks for an EMAIL because that is what staff sign in with, but the
+ * code is texted to the phone on that account. This deployment has no mail
+ * transport; recovery has always been the SMS OTP path. `sentTo` comes back
+ * as a masked hint of the destination so the operator knows which handset to
+ * pick up.
+ *
+ * ANTI-ENUMERATION: an unknown email, a non-staff account and a suspended one
+ * all return the same cheerful 200 as a real dispatch, minus `sentTo`. Do not
+ * "improve" the UI by reporting an unknown address — that hands an
+ * unauthenticated caller a list of which addresses hold console access.
+ */
+export interface ForgotPasswordResultWire {
+  success: boolean;
+  message: string;
+  /** Masked destination, e.g. `•••••00002`. Absent when nothing was sent. */
+  sentTo?: string;
+  expiresIn: number;
+  resendCooldown: number;
+  otpLength: number;
+}
+
+/** `POST /admin/auth/forgot-password` — texts a recovery code. */
+export function adminForgotPassword(input: {
+  email: string;
+}): Promise<ForgotPasswordResultWire> {
+  return post<ForgotPasswordResultWire>(`${P.admin}/auth/forgot-password`, {
+    email: input.email.trim().toLowerCase(),
+  });
+}
+
+/**
+ * `POST /admin/auth/reset-password` — spends the code and sets the password.
+ *
+ * Deliberately returns NO session. The operator is handed back to the sign-in
+ * form to use the credential they just chose, which proves it works while
+ * they are still in front of it and keeps session minting on one path.
+ */
+export function adminResetPassword(input: {
+  email: string;
+  otp: string;
+  newPassword: string;
+}): Promise<{ success: boolean; message: string }> {
+  return post(`${P.admin}/auth/reset-password`, {
+    email: input.email.trim().toLowerCase(),
+    otp: input.otp.trim(),
+    newPassword: input.newPassword,
+  });
 }

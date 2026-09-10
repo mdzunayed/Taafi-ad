@@ -48,7 +48,21 @@ export default async function DashboardLayout({
           <SidebarInset className="min-w-0">
             <Topbar />
             <IncomingRequestAlert />
-            <main className="min-w-0 flex-1 space-y-6 p-4 md:p-6">{children}</main>
+            {/*
+              `overflow-x-clip`, NOT `overflow-x-hidden`.
+
+              Both stop a stray wide child from scrolling the page sideways on a
+              phone, but `hidden` makes this element a scroll container, and a
+              scroll container becomes the containing block for every
+              `position: sticky` descendant. The mobile action bar on the
+              booking detail screen would then pin to the bottom of this
+              full-height box — i.e. somewhere far below the viewport — instead
+              of to the screen. `clip` clips without scrolling, so sticky keeps
+              resolving against the viewport.
+            */}
+            <main className="min-w-0 flex-1 space-y-6 overflow-x-clip p-4 md:p-6">
+              {children}
+            </main>
           </SidebarInset>
         </SidebarProvider>
       </RealtimeProvider>

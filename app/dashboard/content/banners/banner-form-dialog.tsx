@@ -231,7 +231,10 @@ export function BannerFormDialog({ banner }: { banner?: PromoBannerWire }) {
           </Button>
         )}
 
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent
+          mobileFullscreen
+          className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"
+        >
           <BannerForm banner={banner} onClose={() => setOpen(false)} />
         </DialogContent>
       </Dialog>

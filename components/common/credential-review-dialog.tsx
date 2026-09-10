@@ -33,7 +33,10 @@ export function CredentialReviewDialog({
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] w-full overflow-y-auto sm:max-w-5xl">
+      <DialogContent
+        mobileFullscreen
+        className="max-h-[92vh] w-full overflow-y-auto sm:max-w-5xl"
+      >
         <DialogHeader>
           <DialogTitle>{provider.full_name}</DialogTitle>
           <DialogDescription>

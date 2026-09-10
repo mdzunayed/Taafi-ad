@@ -22,9 +22,9 @@ import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EmptyState, TableSkeleton } from '@/components/data/states';
 import {
   DragHandleCell,
-  SortableRows,
+  SortableTable,
   useOptimisticReorder,
-} from '@/components/data/sortable-rows';
+} from '@/components/data/sortable-table';
 import { normalizeError } from '@/lib/api/errors';
 import type { CmsItem } from '@/lib/api/content';
 
@@ -231,6 +231,24 @@ export function ContentCollection<T extends CmsItem>({
     </>
   );
 
+  /** Shared by both bodies for the same reason `rowCells` is. */
+  const tableHead = (
+    <TableHeader>
+      <TableRow>
+        {sortable ? <TableHead className="w-10" /> : null}
+        {columns.map((c) => (
+          <TableHead key={c.header} className={c.className}>
+            {c.header}
+          </TableHead>
+        ))}
+        {rowActions ? <TableHead className="w-16" /> : null}
+        {sortable ? <TableHead className="w-24">Move</TableHead> : null}
+        <TableHead className="w-24">Live</TableHead>
+        <TableHead className="w-16" />
+      </TableRow>
+    </TableHeader>
+  );
+
   return (
     <div className="space-y-4">
       {toolbar}
@@ -245,42 +263,33 @@ export function ContentCollection<T extends CmsItem>({
         <EmptyState title={`No ${title.toLowerCase()} yet`} description={emptyHint} />
       ) : (
         <div className="overflow-x-auto rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {sortable ? <TableHead className="w-10" /> : null}
-                {columns.map((c) => (
-                  <TableHead key={c.header} className={c.className}>
-                    {c.header}
-                  </TableHead>
-                ))}
-                {rowActions ? <TableHead className="w-16" /> : null}
-                {sortable ? <TableHead className="w-24">Move</TableHead> : null}
-                <TableHead className="w-24">Live</TableHead>
-                <TableHead className="w-16" />
-              </TableRow>
-            </TableHeader>
-            {sortable ? (
-              <SortableRows
-                items={rows}
-                disabled={reorder.isPending}
-                onReorder={(ids) => reorder.mutate(ids)}
-              >
-                {(row, index) => (
-                  <>
-                    <DragHandleCell label={rowLabel ?? 'item'} />
-                    {rowCells(row, index)}
-                  </>
-                )}
-              </SortableRows>
-            ) : (
+          {sortable ? (
+            // The sortable path owns its own `<Table>`, so that dnd-kit's
+            // context — and the accessibility `div`s it renders — stay outside
+            // the table element. Both paths render the same header.
+            <SortableTable
+              items={rows}
+              disabled={reorder.isPending}
+              onReorder={(ids) => reorder.mutate(ids)}
+              header={tableHead}
+            >
+              {(row, index) => (
+                <>
+                  <DragHandleCell label={rowLabel ?? 'item'} />
+                  {rowCells(row, index)}
+                </>
+              )}
+            </SortableTable>
+          ) : (
+            <Table>
+              {tableHead}
               <TableBody>
                 {rows.map((row, index) => (
                   <TableRow key={row.id}>{rowCells(row, index)}</TableRow>
                 ))}
               </TableBody>
-            )}
-          </Table>
+            </Table>
+          )}
         </div>
       )}
 

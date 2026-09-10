@@ -25,10 +25,19 @@ import { ApiErrorState } from '@/components/rbac/api-error-state';
 import { EmptyState } from '@/components/data/states';
 import { getActivity, getChartData, getLiveServices, getStats } from '@/lib/api/overview';
 import { qk } from '@/lib/api/query-keys';
+import { pollWhileSignedIn } from '@/lib/auth/session-state';
 import { humanize, money, relativeTime } from '@/lib/format';
 import { RevenueChart } from './revenue-chart';
 
 const POLL_MS = 30_000;
+
+/**
+ * A function, not the bare number, so the timers stop the moment the session
+ * ends instead of ticking on until the redirect out of `endSession()` actually
+ * tears this document down. Three queries here share the interval, so this is
+ * where most of the post-sign-out 401 noise came from.
+ */
+const poll = pollWhileSignedIn(POLL_MS);
 
 function KpiCard({
   label,
@@ -69,18 +78,18 @@ export function OverviewContent() {
   const stats = useQuery({
     queryKey: qk.stats,
     queryFn: getStats,
-    refetchInterval: POLL_MS,
+    refetchInterval: poll,
   });
   const chart = useQuery({ queryKey: qk.chart, queryFn: getChartData });
   const activity = useQuery({
     queryKey: qk.activity,
     queryFn: getActivity,
-    refetchInterval: POLL_MS,
+    refetchInterval: poll,
   });
   const live = useQuery({
     queryKey: qk.liveServices,
     queryFn: getLiveServices,
-    refetchInterval: POLL_MS,
+    refetchInterval: poll,
   });
 
   if (stats.isError) {

@@ -91,12 +91,20 @@ export function VerificationQueue() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
+        {/*
+          Five filters do not fit a 320px bar and must not squeeze the labels
+          into ellipses, so below `sm` the group scrolls horizontally inside its
+          own strip. This is the one exception to the no-sideways-scrolling
+          rule: the strip scrolls, the page does not, and a swipeable filter row
+          is a native-feeling control rather than a defect.
+        */}
         <ToggleGroup
           type="single"
           value={filter}
           onValueChange={(v) => v && setFilter(v as Filter)}
           variant="outline"
           size="sm"
+          className="max-w-full overflow-x-auto"
         >
           {FILTERS.map((f) => (
             <ToggleGroupItem key={f.value} value={f.value}>
@@ -151,7 +159,7 @@ function QueueRow({
 
   return (
     <Card>
-      <CardContent className="flex flex-wrap items-center justify-between gap-4 py-4">
+      <CardContent className="flex flex-col gap-4 py-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{provider.full_name}</span>
@@ -217,7 +225,12 @@ function QueueRow({
             </p>
           )}
         </div>
-        <Button onClick={onReview}>Review credentials</Button>
+        {/* Full width on a phone, where it is the card's one action and a
+            right-aligned button would sit in the corner furthest from a
+            thumb. */}
+        <Button onClick={onReview} className="w-full sm:w-auto">
+          Review credentials
+        </Button>
       </CardContent>
     </Card>
   );

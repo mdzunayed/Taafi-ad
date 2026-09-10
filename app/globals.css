@@ -128,3 +128,75 @@
     @apply font-sans;
   }
 }
+
+/**
+ * ── Touch ergonomics ───────────────────────────────────────────────────────
+ *
+ * This console's controls are sized for a mouse: the default button is 32px
+ * tall and the `sm` one 28px, which is right on a desk and below every
+ * published minimum on a phone (44px on iOS, 48dp on Android). Rather than
+ * re-sizing several hundred call sites — and making the desktop grid airier in
+ * the process, which is the opposite of what a dense operations table needs —
+ * the floor is applied here, gated on the POINTER rather than on the viewport.
+ *
+ * `pointer: coarse` is the honest test. A narrow desktop window is still driven
+ * by a mouse and wants the dense sizing; a 1024px tablet is driven by a finger
+ * and does not. Viewport-width media queries get both of those backwards.
+ *
+ * `min-height`/`min-width` rather than `height`, so a control that is already
+ * taller (a textarea, a multi-line menu item) keeps its own size.
+ */
+@media (pointer: coarse) {
+  [data-slot='button'],
+  [data-slot='sidebar-menu-button'],
+  [data-slot='toggle-group-item'],
+  [data-slot='select-trigger'],
+  [data-slot='dropdown-menu-item'],
+  [data-slot='dropdown-menu-trigger'],
+  [data-slot='tabs-trigger'],
+  [data-slot='command-item'] {
+    min-height: 44px;
+  }
+
+  /* Icon-only buttons are square, so the width has to come up with the
+     height — a 44×32 target is still a miss on the horizontal axis. */
+  [data-slot='button'][data-size^='icon'] {
+    min-width: 44px;
+  }
+
+  /*
+   * Switches and checkboxes CANNOT grow: a 44px switch beside a table row would
+   * re-flow the row, and a 44px checkbox is not a checkbox. They get an
+   * invisible overlay instead — the hit area grows, the painted control does
+   * not, and no layout moves. This is the one place a pseudo-element is worth
+   * more than a class.
+   */
+  [data-slot='switch'],
+  [data-slot='checkbox'] {
+    position: relative;
+  }
+
+  [data-slot='switch']::after,
+  [data-slot='checkbox']::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    height: 44px;
+    width: 44px;
+    transform: translate(-50%, -50%);
+  }
+}
+
+/**
+ * The bottom edge on a notched phone. `viewportFit: 'cover'` (app/layout.tsx)
+ * lets a sticky bar paint under the home indicator; this pads it back out so
+ * the buttons are not sitting beneath the gesture strip. Zero everywhere else.
+ */
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@utility pb-safe-4 {
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}

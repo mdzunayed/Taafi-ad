@@ -11,13 +11,12 @@ import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EmptyState, TableSkeleton } from '@/components/data/states';
 import {
   DragHandleCell,
-  SortableRows,
+  SortableTable,
   useOptimisticReorder,
-} from '@/components/data/sortable-rows';
+} from '@/components/data/sortable-table';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import {
-  Table,
   TableCell,
   TableHead,
   TableHeader,
@@ -41,7 +40,7 @@ import { SectionFormSheet } from './section-form-sheet';
  * too. What keeps this one separate is the `CARE_SERVICES` filter below: the
  * shared table renders the collection it is given, and this page must show a
  * strict subset of it while leaving the hidden row untouched in the cache. The
- * drag plumbing itself is shared — both go through `sortable-rows`.
+ * drag plumbing itself is shared — both go through `sortable-table`.
  *
  * `CARE_SERVICES` is filtered out: it is an ordinary section with a reserved
  * key, but the patient renderer draws it above this list from its own block, so
@@ -141,26 +140,27 @@ export function HomeSectionsTable() {
     <div className="space-y-4">
       {toolbar}
       <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-10" />
-              <TableHead>Title</TableHead>
-              <TableHead>Key</TableHead>
-              <TableHead>Template</TableHead>
-              <TableHead className="tabular-nums">Cards</TableHead>
-              <TableHead className="tabular-nums">Order</TableHead>
-              <TableHead className="w-12" />
-              <TableHead className="w-24">Move</TableHead>
-              <TableHead className="w-24">Live</TableHead>
-              <TableHead className="w-16" />
-            </TableRow>
-          </TableHeader>
-          <SortableRows
-            items={rows}
-            disabled={reorder.isPending}
-            onReorder={(ids) => reorder.mutate(ids)}
-          >
+        <SortableTable
+          items={rows}
+          disabled={reorder.isPending}
+          onReorder={(ids) => reorder.mutate(ids)}
+          header={
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10" />
+                <TableHead>Title</TableHead>
+                <TableHead>Key</TableHead>
+                <TableHead>Template</TableHead>
+                <TableHead className="tabular-nums">Cards</TableHead>
+                <TableHead className="tabular-nums">Order</TableHead>
+                <TableHead className="w-12" />
+                <TableHead className="w-24">Move</TableHead>
+                <TableHead className="w-24">Live</TableHead>
+                <TableHead className="w-16" />
+              </TableRow>
+            </TableHeader>
+          }
+        >
             {(row, index) => (
               <>
                 <DragHandleCell label={row.titleEn ?? 'section'} />
@@ -241,8 +241,7 @@ export function HomeSectionsTable() {
                 </TableCell>
               </>
             )}
-          </SortableRows>
-        </Table>
+        </SortableTable>
       </div>
 
       <ConfirmDialog

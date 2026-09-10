@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo } from 'react';
 
 import { setToken } from '@/lib/auth/token-store';
 import { AUTH_CHANNEL, endSession } from '@/lib/auth/refresh';
+import { markSessionOver } from '@/lib/auth/session-state';
 import {
   effectivePermissionsFor,
   type Permission,
@@ -50,6 +51,13 @@ export function SessionProvider({
         if (event.data?.type === 'signed_out') {
           // Another tab's refresh failed terminally. Do not start our own —
           // that is exactly the storm that trips reuse detection.
+          //
+          // Latch BEFORE navigating: `replace` is scheduled, and this tab's
+          // polls would otherwise keep firing (and 401ing) against a session
+          // we already know is dead. This is also the only signal a background
+          // tab gets — it has no 401 of its own to learn from, because
+          // `refetchInterval` does not run unfocused.
+          markSessionOver();
           window.location.replace(`/login?reason=${event.data.reason ?? 'session_expired'}`);
         }
       };

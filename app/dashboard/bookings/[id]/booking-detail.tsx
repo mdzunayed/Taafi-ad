@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   BadgeCheck,
+  Download,
   FileText,
   Loader2,
   Paperclip,
@@ -41,11 +42,21 @@ import {
 import { qk } from '@/lib/api/query-keys';
 import { normalizeError } from '@/lib/api/errors';
 import { DisabledWhenDenied } from '@/components/rbac/can';
-import { dateTime, humanize, money } from '@/lib/format';
-import { InvoiceDialog } from './invoice-dialog';
+import { bookingRef, dateTime, fileSize, humanize, money } from '@/lib/format';
+import { TERMINAL_STATUSES } from '@/types/wire/booking';
+import { PatientContactActions } from '@/components/bookings/patient-contact-actions';
+/**
+ * The itemized editor SUPERSEDES the old flat `invoice-dialog.tsx`, which is
+ * gone. It is a strict superset: a single-service booking is one line, the flat
+ * waiver is the `৳` mode on the discount control, and the same handler quotes
+ * an advance or corrects an already-paid invoice — so keeping both would have
+ * meant two buttons doing one job with different vocabularies.
+ */
+import { InvoiceEditor } from './invoice-editor';
 import { DispatchSheet } from './dispatch-sheet';
 import { ConfirmPaymentDialog } from './confirm-payment-dialog';
 import { StatusOverrideDialog } from './status-override';
+import { MobileActionBar } from './mobile-action-bar';
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -179,7 +190,14 @@ export function BookingDetail({
   }
 
   const b = booking.data;
-  const attachments = b.attachments ?? b.documents ?? [];
+  /**
+   * `attachments` is the ONLY array on the wire. The old fallback to
+   * `b.documents` could never fire — `withAttachments` deletes that key
+   * server-side before the payload is sent — and reading it here made the
+   * mapping bug below look like a missing-data problem rather than a
+   * wrong-field one.
+   */
+  const attachments = b.attachments ?? [];
 
   /**
    * The deposit is settled once money is recorded against it, by whichever
@@ -220,6 +238,12 @@ export function BookingDetail({
   // still works and still settles that claim; the dialog just says so.
   const claimPending =
     b.deposit_manual_status === 'PENDING_ADMIN_VERIFICATION';
+  /**
+   * Terminal — the visit is over and its money can no longer move. Every write
+   * control on this page is refused server-side from here on, and the Money
+   * card's job changes from "what should this cost?" to "what did it cost?".
+   */
+  const closed = (TERMINAL_STATUSES as readonly string[]).includes(b.status);
 
   /**
    * Resolve the deep-link action against booking state — the param is a hint,
@@ -249,7 +273,9 @@ export function BookingDetail({
     };
 
   return (
-    <div className="space-y-6">
+    // The bottom padding clears the fixed mobile action bar at the end of this
+    // file. Without it the last card's own actions sit underneath it.
+    <div className="space-y-6 max-md:pb-20">
       <Button variant="ghost" size="sm" asChild className="-ml-2">
         <Link href="/dashboard/bookings">
           <ArrowLeft className="size-4" />
@@ -259,13 +285,29 @@ export function BookingDetail({
 
       <PageHeader
         title={b.patient_name}
-        description={`${b.care_type}${b.area ? ` · ${b.area}` : ''}`}
+        description={`#${bookingRef(b.id)} · ${b.care_type}${b.area ? ` · ${b.area}` : ''}`}
         actions={
           <>
-            <Button variant="outline" onClick={() => setInvoiceOpen(true)}>
-              <Receipt className="size-4" />
-              Invoice
-            </Button>
+            {/*
+              On a CLOSED booking the invoice is a record, and the archive is
+              where records are read and printed. Sending the operator there
+              rather than into a dialog that can only say "locked" saves the
+              round trip; the dialog still handles the case where they arrive
+              from a deep link.
+            */}
+            {closed ? (
+              <Button variant="outline" asChild>
+                <Link href={`/dashboard/bookings/history/${b.id}`}>
+                  <Receipt className="size-4" />
+                  Receipt
+                </Link>
+              </Button>
+            ) : (
+              <Button variant="outline" onClick={() => setInvoiceOpen(true)}>
+                <Receipt className="size-4" />
+                Invoice
+              </Button>
+            )}
             {/*
               One primary action at a time. While the deposit is outstanding
               the real next step is confirming the money — which is now a
@@ -315,7 +357,17 @@ export function BookingDetail({
           </CardHeader>
           <CardContent>
             <dl className="grid gap-4 sm:grid-cols-2">
-              <Field label="Patient phone" value={b.patient_phone} />
+              <Field
+                label="Patient phone"
+                value={
+                  <PatientContactActions
+                    bookingId={b.id}
+                    phone={b.patient_phone}
+                    patientName={b.patient_name}
+                    serviceName={b.care_type}
+                  />
+                }
+              />
               <Field label="Service" value={b.care_type} />
               <Field label="Location" value={b.location_text} />
               <Field label="Area" value={b.area} />
@@ -338,12 +390,56 @@ export function BookingDetail({
           <CardHeader>
             <CardTitle>Money</CardTitle>
             <CardDescription>
-              {b.deposit_paid_at
-                ? 'Deposit settled — only the final fee can change.'
-                : 'Deposit not yet paid.'}
+              {/*
+                "Only the final fee can change" is true of a booking in flight
+                and false of a closed one, where nothing can. Saying it anyway
+                is how an operator ends up trying an edit the server refuses.
+              */}
+              {closed
+                ? 'This booking is closed — its invoice is final. Open the receipt to read or print it.'
+                : b.deposit_paid_at
+                  ? 'Deposit settled — only the final fee can change.'
+                  : 'Deposit not yet paid.'}
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {/*
+              The itemized ledger, shown only when an operator actually built
+              one. `is_itemized` is the server's answer to that question —
+              `line_items` is never empty on the wire, because a booking priced
+              through the flat path gets a single synthesised line so the
+              patient app always has something to render. Keying the section on
+              the array's length instead would print a one-row "breakdown" that
+              only restates the fee field two lines below it.
+            */}
+            {b.is_itemized && (b.line_items?.length ?? 0) > 0 && (
+              <div className="mb-4 space-y-1.5 text-sm">
+                {b.line_items!.map((li, i) => (
+                  <div
+                    key={`${li.item_type}-${li.item_id ?? i}-${li.title}`}
+                    className="flex items-baseline justify-between gap-3"
+                  >
+                    <span className="text-muted-foreground min-w-0 truncate">
+                      {li.title}
+                      {li.quantity !== 1 && (
+                        <span className="ml-1 tabular-nums">
+                          × {li.quantity}
+                          {li.unit ? ` ${li.unit}` : ''}
+                        </span>
+                      )}
+                    </span>
+                    <span className="shrink-0 tabular-nums">
+                      {money(li.total_price)}
+                    </span>
+                  </div>
+                ))}
+                <Separator className="my-2" />
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Subtotal</span>
+                  <span className="tabular-nums">{money(b.subtotal)}</span>
+                </div>
+              </div>
+            )}
             <dl className="space-y-3">
               <Field label="Patient offer" value={money(b.offered_budget)} />
               <Field label="Final service fee" value={money(b.final_price)} />
@@ -351,11 +447,55 @@ export function BookingDetail({
                 label="Required deposit"
                 value={money(b.required_deposit ?? b.deposit_quoted_amount)}
               />
-              <Field label="Discount" value={money(b.adjusted_discount)} />
+              <Field
+                label="Discount"
+                /* Name the percentage when there was one. "৳786" alone leaves
+                   an operator reconciling a patient's query unable to tell a
+                   30% promotion from a negotiated waiver that happened to land
+                   on the same figure. */
+                value={
+                  Number(b.discount_percentage ?? 0) > 0
+                    ? `${money(b.adjusted_discount)} (${b.discount_percentage}%)`
+                    : money(b.adjusted_discount)
+                }
+              />
+              {/*
+                What the visit still owes once the deposit and the discount come
+                off — the figure the clinician collects at the door, and the one
+                an operator is asked for on the phone. It was computed in this
+                component already (for the confirm dialog) and never shown, so
+                the card printed the three inputs to the subtraction and left the
+                answer to be done in someone's head.
+
+                `null` when nothing has been priced yet, and the row is dropped
+                rather than rendered as ৳0: "nothing left to pay" and "nobody has
+                quoted this" are different answers.
+              */}
+              {balanceDue !== null && (
+                <Field
+                  label="Balance due after visit"
+                  value={
+                    b.final_paid_at ? 'Paid in full' : money(balanceDue)
+                  }
+                />
+              )}
               <Separator />
               <Field
                 label="Deposit paid"
                 value={b.deposit_paid_at ? dateTime(b.deposit_paid_at) : 'No'}
+              />
+              {/*
+                THE DEPOSIT's verification posture, which "Deposit paid: No" on
+                its own does not give an operator. `deposit_status` is the
+                server's single witness (backend/src/utils/depositPosture.js):
+                PENDING while it is owed, PENDING_VERIFICATION once the patient
+                says they have sent it, CONFIRMED once this page's own button
+                has settled it. The row below it, "Balance verification", is the
+                BALANCE's equivalent and answers a different question.
+              */}
+              <Field
+                label="Deposit verification"
+                value={humanize(b.deposit_status)}
               />
               <Field
                 label="Balance paid"
@@ -495,17 +635,50 @@ export function BookingDetail({
             </p>
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
+              {/*
+                `file_url` / `file_type` / `file_name` are the server's names for
+                these (see `BookingAttachmentWire`). This card read `url` / `mime`
+                / `name` — the shape of the RAW subdocument, which never reaches a
+                browser — so every field was `undefined`, `DocumentPreview` took
+                its empty-url branch, and a booking with a discharge summary and
+                two lab reports rendered three "No file attached" tiles.
+              */}
               {attachments.map((doc, i) => (
-                <div key={`${doc.url}-${i}`} className="space-y-2">
-                  <p className="truncate text-sm font-medium">
-                    {doc.name || `Document ${i + 1}`}
-                  </p>
+                <div key={doc.id ?? `${doc.file_url}-${i}`} className="space-y-2">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="truncate text-sm font-medium">
+                      {doc.file_name || `Document ${i + 1}`}
+                    </p>
+                    {doc.size_bytes ? (
+                      <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                        {fileSize(doc.size_bytes)}
+                      </span>
+                    ) : null}
+                  </div>
                   <DocumentPreview
-                    url={doc.url}
-                    mime={doc.mime}
-                    name={doc.name}
+                    url={doc.file_url}
+                    mime={doc.file_type}
+                    name={doc.file_name}
                     className="h-72"
                   />
+                  {/*
+                    A SAVE, not a second preview. `download_url` is the same
+                    grant with `?download=1`, which makes the delivery route send
+                    Content-Disposition — the difference between a PDF a reviewer
+                    can attach to a case note and one that opens in a tab they
+                    then have to print. `download` alone would not do it: the
+                    bytes come from the API's origin, not this one.
+                  */}
+                  <Button variant="outline" size="sm" asChild>
+                    <a
+                      href={doc.download_url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                    >
+                      <Download className="size-3.5" />
+                      Download
+                    </a>
+                  </Button>
                 </div>
               ))}
             </div>
@@ -513,7 +686,7 @@ export function BookingDetail({
         </CardContent>
       </Card>
 
-      <InvoiceDialog
+      <InvoiceEditor
         booking={b}
         open={invoiceOpen || autoAction === 'invoice'}
         onOpenChange={closeWith(setInvoiceOpen)}
@@ -553,6 +726,15 @@ export function BookingDetail({
         pending={confirmPayment.isPending}
         onConfirm={(body) => confirmPayment.mutateAsync(body)}
       />
+      <MobileActionBar
+        booking={b}
+        closed={closed}
+        showConfirmPayment={showConfirmPayment}
+        depositAmount={depositAmount}
+        onInvoice={() => setInvoiceOpen(true)}
+        onConfirmPayment={() => setConfirmPayOpen(true)}
+      />
+
       <ConfirmDialog
         open={cancelOpen}
         onOpenChange={setCancelOpen}

@@ -135,3 +135,34 @@ export async function registerSubAdmin(body: {
   const res = await api.post(`${P.admin}/register-sub-admin`, body);
   return unwrapFlat(res);
 }
+
+/**
+ * A verified doctor, as the manual booking form's dispatch picker renders them.
+ *
+ * Deliberately NOT the dispatch roster (`GET /admin/requests/:id/doctors`),
+ * which computes live availability — distance from the patient's GPS, load
+ * against a ±2h window — against a booking that does not exist yet.
+ */
+export interface ApprovedDoctorWire {
+  id: string;
+  fullName: string;
+  specialization: string;
+  rating: number;
+  fee: number;
+}
+
+/**
+ * `GET /admin/doctors?status=APPROVED`.
+ *
+ * `APPROVED` is the console's word for what the backend stores as
+ * `verification_status: 'verified'`; the server owns that translation. Rows
+ * that are verified but SUSPENDED are excluded — offering one would be a
+ * dead-end pick, because the assign path refuses it and the operator would be
+ * told no with nothing on the card explaining why.
+ */
+export async function listApprovedDoctors(): Promise<ApprovedDoctorWire[]> {
+  const res = await api.get(`${P.admin}/doctors`, {
+    params: { status: 'APPROVED' },
+  });
+  return unwrapFieldArray<ApprovedDoctorWire>(res, 'doctors');
+}

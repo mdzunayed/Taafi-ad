@@ -60,6 +60,7 @@ export const ASSIGNABLE_ROLES = [
   'doctor',
   'nurse',
   'support_member',
+  'finance_admin',
   'admin',
 ] as const;
 
@@ -70,9 +71,37 @@ export const ROLE_OPTION_LABEL: Record<AssignableRole, string> = {
   user: 'Patient',
   doctor: 'Doctor',
   nurse: 'Nurse',
-  support_member: 'Support member',
+  support_member: 'Support Admin',
+  finance_admin: 'Finance Admin',
   admin: 'Admin',
 };
+
+/**
+ * The subset of `ASSIGNABLE_ROLES` that `POST /admin/accounts` will provision.
+ *
+ * Narrower than the roles an EXISTING account can be moved to: this endpoint
+ * mints a brand-new privileged login, so it creates back-office accounts only.
+ * A patient or clinician is created through their own provisioning flows,
+ * which capture the fields those roles need. `super_admin` is absent for the
+ * same reason it is absent above — the role that edits the permission matrix
+ * is not provisioned from a form.
+ */
+export const STAFF_CREATABLE_ROLES = [
+  'support_member',
+  'finance_admin',
+  'admin',
+] as const satisfies readonly AssignableRole[];
+
+export type StaffCreatableRole = (typeof STAFF_CREATABLE_ROLES)[number];
+
+/** `POST /admin/accounts` — same one-shot password contract as a new patient. */
+export interface CreateStaffResultWire {
+  success: boolean;
+  message?: string;
+  account: AdminAccountWire;
+  temporaryPassword: string;
+  requiresPasswordReset: boolean;
+}
 
 /** `POST /admin/patients` — the one-shot password is never retrievable again. */
 export interface CreatePatientResultWire {

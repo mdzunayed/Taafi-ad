@@ -39,6 +39,7 @@ export const BACK_OFFICE_ROLES = [
   'admin',
   'super_admin',
   'support_member',
+  'finance_admin',
 ] as const;
 
 export type BackOfficeRole = (typeof BACK_OFFICE_ROLES)[number];
@@ -68,6 +69,19 @@ export const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
     PERMISSIONS.VIEW_PATIENTS,
     PERMISSIONS.FINANCE_READ,
     PERMISSIONS.MANAGE_PROVIDERS,
+  ],
+  /**
+   * Finance handles the money and nothing else: they read and write the
+   * ledger and can look a patient up, because a payment line is unanswerable
+   * without knowing whose it is.
+   *
+   * No `manage_bookings` on purpose — dispatching a visit is an ops job, and
+   * whoever moves the money should not also create the booking it settles.
+   */
+  finance_admin: [
+    PERMISSIONS.FINANCE_READ,
+    PERMISSIONS.FINANCE_WRITE,
+    PERMISSIONS.VIEW_PATIENTS,
   ],
   doctor: [],
   nurse: [],
@@ -138,9 +152,17 @@ export function hasAnyPermission(
   return permissions.some((p) => hasPermission(subject, p));
 }
 
-/** Human label for a role badge. */
+/**
+ * Human label for a role badge.
+ *
+ * `support_member` reads as "Support Admin" on screen. The DB value is
+ * unchanged — renaming a stored enum would need a migration to buy nothing
+ * but a nicer string — so this table is the one place the two vocabularies
+ * meet.
+ */
 export const ROLE_LABEL: Record<string, string> = {
   super_admin: 'Super Admin',
   admin: 'Admin',
-  support_member: 'Support',
+  support_member: 'Support Admin',
+  finance_admin: 'Finance Admin',
 };

@@ -6,9 +6,10 @@ import axios, {
 } from 'axios';
 
 import { API_ORIGIN } from './paths';
-import { normalizeError, isAccountInactive } from './errors';
+import { ApiError, normalizeError, isAccountInactive } from './errors';
 import { getAccessToken } from '@/lib/auth/token-store';
 import { endSession, ensureFreshToken } from '@/lib/auth/refresh';
+import { isSessionOver } from '@/lib/auth/session-state';
 
 interface RetriableConfig extends InternalAxiosRequestConfig {
   _retried?: boolean;
@@ -49,6 +50,19 @@ export const api = axios.create({
  * ────────────────────────────────────────────────────────────────────────────
  */
 api.interceptors.request.use(async (config) => {
+  // Hard stop once the session has ended. The redirect out of `endSession()`
+  // is scheduled, not instant, so this document can stay alive for a while
+  // yet — and every request it makes in that window is guaranteed to be a
+  // 401. Failing here costs no round trip and, crucially, cannot re-enter the
+  // response interceptor's refresh-and-retry path. See lib/auth/session-state.
+  if (isSessionOver()) {
+    throw new ApiError({
+      status: 401,
+      message: 'Your session has ended. Please sign in again.',
+      errorCode: 'session_over',
+    });
+  }
+
   const token = await getAccessToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
@@ -61,6 +75,11 @@ function isAuthPath(url: string | undefined): boolean {
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
+    // Our own request-interceptor rejection for a dead session. It never
+    // reached the network, so there is nothing to refresh and nothing to
+    // normalize — hand it straight back.
+    if (error instanceof ApiError) return Promise.reject(error);
+
     const config = error.config as RetriableConfig | undefined;
     const status = error.response?.status;
 

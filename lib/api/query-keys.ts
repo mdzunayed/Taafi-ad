@@ -11,12 +11,27 @@ export const qk = {
   teamPool: (id: string) => ['bookings', id, 'team-pool'] as const,
   pendingDeposit: ['bookings', 'pending-deposit'] as const,
   pendingPayment: ['bookings', 'pending-payment'] as const,
+  /**
+   * The invoice archive, keyed by its query. Server-side paging and search
+   * mean each filter combination is a distinct page of rows, so they cannot
+   * share one cache entry the way the client-filtered `bookings` list does.
+   */
+  bookingArchive: (query: Record<string, unknown>) =>
+    ['bookings', 'archive', query] as const,
 
   providers: ['providers'] as const,
   qualifications: (id: string) => ['providers', id, 'qualifications'] as const,
 
   patients: ['patients'] as const,
   patient: (id: string) => ['patients', id] as const,
+  /**
+   * Type-ahead results, keyed by the term. A per-term entry is what makes
+   * backspacing instant: the previous query's rows are still cached, so the
+   * list repaints from memory instead of flashing empty on a refetch.
+   */
+  patientSearch: (q: string) => ['patients', 'search', q] as const,
+  /** The verified-doctor roster behind the manual booking form's dispatch picker. */
+  approvedDoctors: ['providers', 'doctors', 'approved'] as const,
 
   accounts: (query: Record<string, unknown>) => ['accounts', query] as const,
   account: (id: string) => ['accounts', id] as const,
@@ -31,7 +46,24 @@ export const qk = {
   auditLogs: (params: Record<string, unknown>) => ['audit-logs', params] as const,
   auditActions: ['audit-logs', 'actions'] as const,
 
+  /**
+   * The back-office catalogs behind the invoice editor's pickers. Separate
+   * keys from `services` below: that one holds the CMS's decorated storefront
+   * rows (images, ratings, category pills) from a different endpoint, and
+   * sharing an entry would have the picker render whichever shape was fetched
+   * last.
+   */
+  supplies: ['supplies'] as const,
+  serviceCatalog: ['service-catalog'] as const,
+
   services: ['content', 'services'] as const,
+  /**
+   * The catalog page's list, back-office rows included. A DIFFERENT endpoint
+   * from `services` above, so it needs its own entry — but nested underneath
+   * it, because invalidation is prefix-matched: every existing
+   * `invalidateQueries({ queryKey: qk.services })` already clears this too.
+   */
+  servicesAll: ['content', 'services', 'all'] as const,
   categories: ['content', 'categories'] as const,
   homeSections: ['content', 'home-sections'] as const,
   banners: ['content', 'banners'] as const,
