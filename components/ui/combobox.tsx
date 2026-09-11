@@ -78,6 +78,32 @@ export interface ComboboxOption {
  * The truncation footer sits OUTSIDE the scroller. Inside, "40 more match" is
  * pinned to the bottom of a list nobody scrolls to the bottom of — which is
  * exactly the operator who needed to read it.
+ *
+ * ## Why the popover goes modal inside a dialog
+ *
+ * None of the height rules above could be seen working, because inside the
+ * invoice dialog the list did not scroll AT ALL — the operator could open "Add
+ * a service", see the catalog clipped at `max-h-64`, and have the wheel and the
+ * flick do nothing.
+ *
+ * That is the scroll lock, not the CSS. A Radix dialog wraps its content in
+ * `react-remove-scroll`, which listens for `wheel`/`touchmove` on `document`
+ * and calls `preventDefault()` on anything that did not originate inside the
+ * locked subtree. `PopoverContent` portals to `document.body`, so every scroll
+ * gesture over this list is an outside event by that test and is cancelled
+ * before the list ever sees it. `overflow-y-auto` cannot help: the element is
+ * scrollable, the browser is just never allowed to scroll it.
+ *
+ * `modal` is the fix Radix ships for exactly this. It makes the popover mount
+ * its own `RemoveScroll`, which (a) puts this list inside a locked subtree, so
+ * the gesture is no longer an outside event, and (b) pushes a new lock onto the
+ * stack, which the dialog's own lock defers to while it is on top.
+ *
+ * It is turned on ONLY when the trigger is actually inside a dialog or sheet,
+ * because `modal` also traps focus, `aria-hidden`s the rest of the page and
+ * takes the scrollbar off `<body>` — a layout shift on every open, and a real
+ * cost for no benefit on the manual-booking page, where nothing is locking
+ * scroll and the non-modal popover already works.
  */
 const MAX_VISIBLE = 50;
 
@@ -121,6 +147,12 @@ export function Combobox({
 }) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
+  // Whether THIS combobox is under a scroll lock, decided from the live DOM at
+  // open time rather than from a prop: a caller should not have to know that a
+  // sheet three components up is a Radix dialog underneath, and would only
+  // find out by shipping a list nobody can scroll.
+  const [locked, setLocked] = React.useState(false);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
 
   const selected = options.find((o) => o.value === value) ?? null;
 
@@ -155,7 +187,20 @@ export function Combobox({
   return (
     <Popover
       open={open}
+      // Read in the same handler that opens it, so `modal` is already correct on
+      // the render that mounts the content. Both `Sheet` and `Dialog` are the
+      // same Radix primitive and both lock scroll, so both are tested for.
+      modal={locked}
       onOpenChange={(next) => {
+        if (next) {
+          setLocked(
+            Boolean(
+              triggerRef.current?.closest(
+                '[data-slot="dialog-content"],[data-slot="sheet-content"]',
+              ),
+            ),
+          );
+        }
         setOpen(next);
         // Reset on close so re-opening shows the whole catalog rather than
         // whatever was typed last time — an operator who found nothing and gave
@@ -166,6 +211,7 @@ export function Combobox({
       <PopoverTrigger asChild>
         <Button
           id={id}
+          ref={triggerRef}
           variant="outline"
           role="combobox"
           aria-expanded={open}
@@ -179,7 +225,10 @@ export function Combobox({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-(--radix-popover-trigger-width) max-h-(--radix-popover-content-available-height) p-0"
+        // `pointer-events-auto` is belt-and-braces against the other half of the
+        // dialog's isolation: a modal layer sets `pointer-events: none` on
+        // `<body>`, and this content is portaled there.
+        className="pointer-events-auto w-(--radix-popover-trigger-width) max-h-(--radix-popover-content-available-height) p-0"
         align="start"
       >
         <Command shouldFilter={false} className="max-h-full min-h-0">
