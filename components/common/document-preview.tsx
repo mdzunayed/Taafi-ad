@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { resolveDocumentUrl } from '@/lib/api/document-url';
 
 /**
  * Renders an uploaded document, switching on the MIME the SERVER sniffed from
@@ -35,9 +36,14 @@ import { Button } from '@/components/ui/button';
  * PDFs are left to the browser's built-in viewer, which already has zoom and
  * paging of its own — wrapping it in a second set of controls that cannot see
  * into the iframe would produce two disagreeing zoom levels.
+ *
+ * No `crossOrigin` on the <img>. It would turn a plain image load into a CORS
+ * request that only passes for origins on the API's allow-list — a Vercel
+ * preview deployment would lose every preview — and nothing here reads the
+ * pixels back, which is the only thing that attribute is for.
  */
 export function DocumentPreview({
-  url,
+  url: rawUrl,
   mime,
   name,
   className = 'h-[60vh]',
@@ -49,6 +55,10 @@ export function DocumentPreview({
   className?: string;
   zoomable?: boolean;
 }) {
+  // Every consumer below — the <img>, the <iframe>, the new-tab links — reads
+  // this, so a grant the server addressed to the wrong host is repaired once.
+  const url = resolveDocumentUrl(rawUrl);
+
   // View state is keyed by `url` so a new file in the same pane starts fresh —
   // otherwise the previous document's zoom and pan carry over and the next one
   // opens off-screen, looking blank. Reset happens during render (the

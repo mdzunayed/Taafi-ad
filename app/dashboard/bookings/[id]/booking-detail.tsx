@@ -41,6 +41,7 @@ import {
 } from '@/lib/api/bookings';
 import { qk } from '@/lib/api/query-keys';
 import { normalizeError } from '@/lib/api/errors';
+import { resolveDocumentUrl } from '@/lib/api/document-url';
 import { DisabledWhenDenied } from '@/components/rbac/can';
 import { bookingRef, dateTime, fileSize, humanize, money } from '@/lib/format';
 import { TERMINAL_STATUSES } from '@/types/wire/booking';
@@ -671,7 +672,7 @@ export function BookingDetail({
                   */}
                   <Button variant="outline" size="sm" asChild>
                     <a
-                      href={doc.download_url}
+                      href={resolveDocumentUrl(doc.download_url)}
                       target="_blank"
                       rel="noreferrer noopener"
                     >
