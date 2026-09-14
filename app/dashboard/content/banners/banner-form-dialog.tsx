@@ -100,6 +100,62 @@ function toDateInput(value: string | null | undefined): string {
   return Number.isNaN(at.getTime()) ? '' : at.toISOString().slice(0, 10);
 }
 
+/**
+ * A stored gradient stop -> `#RRGGBB`, or `fallback` when it is not a colour.
+ *
+ * `<input type="color">` only understands `#rrggbb` and silently shows black
+ * for anything else, while the old free-text boxes let `#FFF`, `4C1D95` or
+ * `purple` onto the row. Normalising at load keeps the swatch honest about
+ * what Save will send. Shorthand and `AARRGGBB` mirror the app's `hexToColor`.
+ */
+function toHexColor(value: string | undefined, fallback: string): string {
+  let hex = (value ?? '').trim().replace(/^#/, '');
+  if (hex.length === 3) hex = [...hex].map((c) => c + c).join('');
+  if (hex.length === 8) hex = hex.slice(2);
+  return /^[0-9a-f]{6}$/i.test(hex) ? `#${hex.toUpperCase()}` : fallback;
+}
+
+/**
+ * A gradient stop as a round native colour swatch plus its hex readout.
+ *
+ * The whole bar is a label for the input, so a click anywhere on it opens the
+ * OS picker. The swatch pseudo-elements need their own rounding and padding
+ * reset — `rounded-full` on the input alone leaves a square inside a circle.
+ */
+function ColorField({
+  id,
+  label,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <label
+        htmlFor={id}
+        className="border-input bg-muted/40 focus-within:border-ring focus-within:ring-ring/50 flex cursor-pointer items-center gap-3 rounded-lg border p-2 transition-colors focus-within:ring-3"
+      >
+        <input
+          id={id}
+          type="color"
+          value={value}
+          // Browsers report lowercase; upper keeps it in step with the defaults.
+          onChange={(e) => onChange(e.target.value.toUpperCase())}
+          className="ring-border size-10 shrink-0 cursor-pointer appearance-none rounded-full border-0 bg-transparent p-0 ring-1 outline-none [&::-moz-color-swatch]:rounded-full [&::-moz-color-swatch]:border-0 [&::-webkit-color-swatch]:rounded-full [&::-webkit-color-swatch]:border-0 [&::-webkit-color-swatch-wrapper]:p-0"
+        />
+        <span className="text-muted-foreground font-mono text-sm font-medium">
+          {value}
+        </span>
+      </label>
+    </div>
+  );
+}
+
 /** The populated target service comes back as an object; the form wants the id. */
 function targetServiceIdOf(banner: PromoBannerWire | undefined): string {
   const raw = banner?.targetServiceId;
@@ -268,10 +324,10 @@ function BannerForm({
 
   // Appearance
   const [gradientFrom, setGradientFrom] = useState(
-    banner?.gradientColors?.[0] ?? DEFAULT_GRADIENT[0],
+    toHexColor(banner?.gradientColors?.[0], DEFAULT_GRADIENT[0]),
   );
   const [gradientTo, setGradientTo] = useState(
-    banner?.gradientColors?.[1] ?? DEFAULT_GRADIENT[1],
+    toHexColor(banner?.gradientColors?.[1], DEFAULT_GRADIENT[1]),
   );
 
   // Scheduling
@@ -468,24 +524,18 @@ function BannerForm({
         />
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="bn-grad-from">Gradient start</Label>
-            <Input
-              id="bn-grad-from"
-              value={gradientFrom}
-              onChange={(e) => setGradientFrom(e.target.value)}
-              placeholder="#4C1D95"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="bn-grad-to">Gradient end</Label>
-            <Input
-              id="bn-grad-to"
-              value={gradientTo}
-              onChange={(e) => setGradientTo(e.target.value)}
-              placeholder="#8B5CF6"
-            />
-          </div>
+          <ColorField
+            id="bn-grad-from"
+            label="Gradient start"
+            value={gradientFrom}
+            onChange={setGradientFrom}
+          />
+          <ColorField
+            id="bn-grad-to"
+            label="Gradient end"
+            value={gradientTo}
+            onChange={setGradientTo}
+          />
         </div>
         <p className="text-muted-foreground -mt-2 text-xs">
           Shown behind the card while the image loads, and instead of it when
